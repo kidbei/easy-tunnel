@@ -31,14 +31,16 @@ const (
 	CommandPing = 1
 	//CommandPong pong返回指令
 	CommandPong = 2
-	//CommondForwardToLocal 转发数据到客户端本地端口指令
-	CommondForwardToLocal = 3
+	//CommandForwardToLocal 转发数据到客户端本地端口指令
+	CommandForwardToLocal = 3
 	//CommandOpenTunnel 开启端口映射
 	CommandOpenTunnel = 4
 	//CommandAgentChannelClosed 客户端agent通道关闭
 	CommandAgentChannelClosed = 5
 	//CommandForwardToTunnel 转发数据到映射通道
 	CommandForwardToTunnel = 6
+	//CommandTunnelChannelClosed 映射通道上的连接主动关闭
+	CommandTunnelChannelClosed = 7
 )
 
 //Packet 数据包
@@ -95,7 +97,7 @@ readLoop:
 		buffer := make([]byte, 1024)
 		readLen, err := conn.Read(buffer)
 		if err != nil {
-			fmt.Println("read from client error", err)
+			fmt.Printf("bridge channel disconnect:%s, %+v\n", conn.RemoteAddr().String(), err)
 			if protocolHandler.DisconnectHandler != nil {
 				protocolHandler.DisconnectHandler()
 			}

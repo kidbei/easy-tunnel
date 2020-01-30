@@ -12,17 +12,18 @@ type Agent struct {
 	channelID uint32
 	localHost string
 	localPort int
+	TunnelChannelClosed bool
 
 	bridgeClient *BridgeClient
 }
 
 //NewAgent 新建本地连接
 func NewAgent(channelID uint32, host string, port int, bridgeClient *BridgeClient) (*Agent, error) {
-	agent := &Agent{channelID: channelID, localHost: host, localPort: port, bridgeClient: bridgeClient}
+	agent := &Agent{channelID: channelID, localHost: host, localPort: port, bridgeClient: bridgeClient, TunnelChannelClosed: false}
 
-	raddr, err := net.ResolveTCPAddr("tcp", host+":"+strconv.Itoa(port))
+	addr, err := net.ResolveTCPAddr("tcp", host+":"+strconv.Itoa(port))
 
-	conn, err := net.DialTCP("tcp", nil, raddr)
+	conn, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
 		fmt.Println("connect failed", err)
 		return nil, err
@@ -37,7 +38,11 @@ func NewAgent(channelID uint32, host string, port int, bridgeClient *BridgeClien
 func (agent *Agent) handleConnection(conn net.Conn) {
 
 	defer conn.Close()
-	defer agent.bridgeClient.NotifyAgentChannelClosed(agent.channelID)
+	defer func() {
+		if !agent.TunnelChannelClosed {
+			agent.bridgeClient.NotifyAgentChannelClosed(agent.channelID)
+		}
+	}()
 	defer agent.bridgeClient.DeleteAgentChannel(agent.channelID)
 	for {
 		buffer := make([]byte, 1024)
@@ -55,4 +60,11 @@ func (agent *Agent) handleConnection(conn net.Conn) {
 //ForwardToAgentChannel 转发数据到本地端口
 func (agent *Agent) ForwardToAgentChannel(data []byte) {
 	agent.conn.Write(data)
+}
+
+//CloseAgent 主动关闭客户端到目标的连接
+func (agent *Agent) CloseAgent() {
+	fmt.Printf("close agent, channelID:%d, address:%s\n", agent.channelID, agent.conn.RemoteAddr().String())
+	agent.TunnelChannelClosed = true
+	agent.conn.Close()
 }

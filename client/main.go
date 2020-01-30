@@ -1,6 +1,11 @@
 package main
 
-import "flag"
+import (
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+)
 
 var (
 	remoteHost     *string
@@ -39,4 +44,10 @@ func main() {
 	if e != nil {
 		panic(msg)
 	}
+
+	c := make(chan os.Signal)
+	signal.Notify(c)
+	s := <-c
+	fmt.Println("exit", s)
+	bridgeClient.Close()
 }

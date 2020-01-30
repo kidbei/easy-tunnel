@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kidbei/easy-tunnel/core"
 	"net"
 	"strconv"
 	"sync"
-	"github.com/kidbei/easy-tunnel/core"
 )
 
 //BridgeServer 连接客户端通道
@@ -22,6 +22,7 @@ type BridgeChannel struct {
 	protocolHandler       *core.ProtocolHandler
 	channelIDTunnelMap    map[uint32]*Tunnel
 	channelIDTunnelLocker sync.Mutex
+	tunnels				  map[uint32]*Tunnel
 }
 
 //Start start bridge server
@@ -47,13 +48,23 @@ func (bridgeServer BridgeServer) Start() {
 }
 
 func (bridgeServer *BridgeServer) handleBridgeConnection(conn net.Conn) {
-	channel := &BridgeChannel{channelIDTunnelMap: make(map[uint32]*Tunnel)}
+	channel := &BridgeChannel{channelIDTunnelMap: make(map[uint32]*Tunnel), tunnels:make(map[uint32]*Tunnel)}
 	channel.conn = conn
 	channel.protocolHandler = &core.ProtocolHandler{RequestHandler: channel.handleRequest,
-		NotifyHandler: channel.handleNotify, Conn: conn}
+		NotifyHandler: channel.handleNotify, Conn: conn, DisconnectHandler:channel.disconnectHandler}
 	channel.protocolHandler.Init()
 
 	channel.protocolHandler.ReadAndUnpack(conn)
+}
+
+
+func (bridgeChannel *BridgeChannel) disconnectHandler() {
+	bridgeChannel.channelIDTunnelLocker.Lock()
+	defer bridgeChannel.channelIDTunnelLocker.Unlock()
+	for _,tunnel := range bridgeChannel.tunnels {
+		tunnel.CloseTunnel()
+	}
+	bridgeChannel.tunnels = make(map[uint32]*Tunnel)
 }
 
 //handleRequest 处理请求
@@ -88,18 +99,20 @@ func (bridgeChannel *BridgeChannel) handleOpenTunnel(packet *core.Packet) (data 
 		return []byte("invalid request params"), e
 	}
 	fmt.Printf("open tunnel:%+v\n", openTunnelReq)
-	_, openErr := NewTunnel(openTunnelReq.BindHost, openTunnelReq.BindPort,
+	tunnel, openErr := NewTunnel(openTunnelReq.BindHost, openTunnelReq.BindPort,
 		openTunnelReq.LocalHost, openTunnelReq.LocalPort, bridgeChannel)
 	if openErr != nil {
+		fmt.Printf("open tunnel failed:%+v\n", openErr)
 		return []byte("open tunnel error"), openErr
 	}
+	bridgeChannel.tunnels[tunnel.TunnelID] = tunnel
 	return []byte("open success"), nil
 }
 
 //handleAgentChannelClosed 客户端通道关闭
 func (bridgeChannel *BridgeChannel) handleAgentChannelClosed(packet *core.Packet) {
 	if packet.Data == nil {
-		fmt.Printf("invalid request, channelID is nil:%+v\n", packet)
+		fmt.Printf("invalid request, ChannelID is nil:%+v\n", packet)
 		return
 	}
 	channelID := core.BytesToUInt32(packet.Data)
@@ -119,7 +132,7 @@ func (bridgeChannel *BridgeChannel) handleForwardToTunnel(packet *core.Packet) {
 	data := packet.Data[4:len(packet.Data)]
 	tunnel := bridgeChannel.GetChannelTunnel(channelID)
 	if tunnel == nil {
-		fmt.Printf("tunnel not found for channelID:%d, ignore to forward\n", channelID)
+		fmt.Printf("tunnel not found for ChannelID:%d, ignore to forward\n", channelID)
 		return
 	}
 	tunnel.ForwardToTunnel(channelID, data)
@@ -132,7 +145,13 @@ func (bridgeChannel *BridgeChannel) ForwardDataToLocal(channelID uint32,
 	packetData := append(channelIDBytes, core.Int32ToBytes(int32(core.StringIPToInt(localHost)))...)
 	packetData = append(packetData, core.Uint32ToBytes(uint32(localPort))...)
 	packetData = append(packetData, data...)
-	bridgeChannel.protocolHandler.Notify(core.CommondForwardToLocal, packetData)
+	bridgeChannel.protocolHandler.Notify(core.CommandForwardToLocal, packetData)
+}
+
+//NotifyTunnelChannelClosed 映射连接上的连接主动关闭后触发
+func (bridgeChannel *BridgeChannel) NotifyTunnelChannelClosed(channelID uint32) {
+	fmt.Printf("notify tunnel channel closed to local agent, ChannelID:%d\n", channelID)
+	bridgeChannel.protocolHandler.Notify(core.CommandTunnelChannelClosed, core.Uint32ToBytes(channelID))
 }
 
 //AddChannelTunnel x

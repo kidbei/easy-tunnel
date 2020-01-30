@@ -15,9 +15,20 @@ type Tunnel struct {
 	localHost              string
 	localPort              int
 	bridgeChannel          *BridgeChannel
-	tunnelChannelMap       map[uint32]*net.Conn
+	tunnelChannelMap       map[uint32]*TunnelChannel
 	tunnelChannelMapLocker sync.RWMutex
 	channelIDAtom          uint32
+	listener			   net.Listener
+	TunnelID			   uint32
+}
+
+var tunnelIDAtom = uint32(1)
+
+type TunnelChannel struct {
+	Conn          net.Conn
+	AgentClosed   bool
+	bridgeChannel *BridgeChannel
+	ChannelID     uint32
 }
 
 //NewTunnel 开启端口映射
@@ -25,13 +36,14 @@ func NewTunnel(host string, port int, localHost string, localPort int,
 	bridgeChannel *BridgeChannel) (*Tunnel, error) {
 
 	tunnel := &Tunnel{host: host, port: port, bridgeChannel: bridgeChannel,
-		tunnelChannelMap: make(map[uint32]*net.Conn), channelIDAtom: uint32(1),
-		localHost: localHost, localPort: localPort}
+		tunnelChannelMap: make(map[uint32]*TunnelChannel), channelIDAtom: uint32(1),
+		localHost: localHost, localPort: localPort, TunnelID:atomic.AddUint32(&tunnelIDAtom, 1)}
 
 	server, err := net.Listen("tcp", host+":"+strconv.Itoa(port))
 	if err != nil {
 		return nil, err
 	}
+	tunnel.listener = server
 	go func() {
 		defer server.Close()
 
@@ -39,7 +51,7 @@ func NewTunnel(host string, port int, localHost string, localPort int,
 			conn, e := server.Accept()
 			if e != nil {
 				fmt.Println("accept error", e)
-				continue
+				break
 			}
 			go tunnel.handleConnection(conn)
 		}
@@ -52,7 +64,7 @@ func (tunnel *Tunnel) handleConnection(conn net.Conn) {
 	fmt.Printf("new tunnel connection %s\n", conn.RemoteAddr().String())
 
 	channelID := atomic.AddUint32(&tunnel.channelIDAtom, 1)
-	tunnel.AddTunnelChannel(channelID, &conn)
+	tunnelChannel := tunnel.AddTunnelChannel(channelID, conn)
 	tunnel.bridgeChannel.AddChannelTunnel(channelID, tunnel)
 
 	defer conn.Close()
@@ -69,31 +81,49 @@ func (tunnel *Tunnel) handleConnection(conn net.Conn) {
 		data := buffer[0:readLen]
 		tunnel.bridgeChannel.ForwardDataToLocal(channelID, tunnel.localHost, tunnel.localPort, data)
 	}
+	if !tunnelChannel.AgentClosed {
+		tunnelChannel.notifyTunnelChannelClosed()
+	}
 }
 
 //CloseTunnelChannel 关闭映射连接通道
 func (tunnel *Tunnel) CloseTunnelChannel(channelID uint32) {
-	conn := *tunnel.GetTunnelChannel(channelID)
-	if conn != nil {
-		conn.Close()
+	tunnelChannel := tunnel.GetTunnelChannel(channelID)
+	if tunnelChannel != nil {
+		fmt.Printf("close tunnel channel, ChannelID:%d, address:%s\n", channelID, tunnelChannel.Conn.RemoteAddr().String())
+		tunnelChannel.AgentClosed = true
+		tunnelChannel.Conn.Close()
+	}
+}
+
+//CloseTunnel 关闭所有连接
+func (tunnel *Tunnel) CloseTunnel() {
+	fmt.Printf("close tunnel:%s\n", tunnel.listener.Addr().String())
+	tunnel.tunnelChannelMapLocker.Lock()
+	defer tunnel.tunnelChannelMapLocker.Unlock()
+	tunnel.listener.Close()
+	for channelID, _ := range tunnel.tunnelChannelMap {
+		tunnel.CloseTunnelChannel(channelID)
 	}
 }
 
 //ForwardToTunnel x
 func (tunnel *Tunnel) ForwardToTunnel(channelID uint32, data []byte) {
-	conn := *tunnel.GetTunnelChannel(channelID)
-	if conn == nil {
-		fmt.Printf("tunnel channel is not found for channelID:%d\n", channelID)
+	tunnelChannel := tunnel.GetTunnelChannel(channelID)
+	if tunnelChannel == nil {
+		fmt.Printf("tunnel channel is not found for ChannelID:%d\n", channelID)
 		return
 	}
-	conn.Write(data)
+	tunnelChannel.Conn.Write(data)
 }
 
 //AddTunnelChannel x
-func (tunnel *Tunnel) AddTunnelChannel(channelID uint32, conn *net.Conn) {
+func (tunnel *Tunnel) AddTunnelChannel(channelID uint32, conn net.Conn) *TunnelChannel {
 	tunnel.tunnelChannelMapLocker.Lock()
 	defer tunnel.tunnelChannelMapLocker.Unlock()
-	tunnel.tunnelChannelMap[channelID] = conn
+	tunnelChannel := &TunnelChannel{Conn:conn, AgentClosed:false, bridgeChannel:tunnel.bridgeChannel, ChannelID:channelID}
+	tunnel.tunnelChannelMap[channelID] = tunnelChannel
+	return tunnelChannel
 }
 
 //DeleteTunnelChannel x
@@ -104,6 +134,14 @@ func (tunnel *Tunnel) DeleteTunnelChannel(channelID uint32) {
 }
 
 //GetTunnelChannel x
-func (tunnel *Tunnel) GetTunnelChannel(channelID uint32) *net.Conn {
-	return tunnel.tunnelChannelMap[channelID]
+func (tunnel *Tunnel) GetTunnelChannel(channelID uint32) *TunnelChannel {
+	if tunnel, exist := tunnel.tunnelChannelMap[channelID]; exist {
+		return tunnel
+	} else {
+		return nil
+	}
+}
+
+func (tunnelChannel *TunnelChannel) notifyTunnelChannelClosed()  {
+	tunnelChannel.bridgeChannel.NotifyTunnelChannelClosed(tunnelChannel.ChannelID)
 }

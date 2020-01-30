@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ type BridgeClient struct {
 	protocolHandler       *core.ProtocolHandler
 	agentChannelMap       map[uint32]*Agent
 	agentChannelMapLocker sync.Mutex
+	conn				  net.Conn
 }
 
 //Connect 连接服务端
@@ -26,6 +28,7 @@ func (bridgeClient *BridgeClient) Connect(host string, port int) (bool, error) {
 		fmt.Println("connect failed", err)
 		return false, err
 	}
+	bridgeClient.conn = conn
 	bridgeClient.agentChannelMap = make(map[uint32]*Agent)
 	bridgeClient.protocolHandler = &core.ProtocolHandler{RequestHandler: bridgeClient.handleRequest,
 		NotifyHandler: bridgeClient.handleNotify, DisconnectHandler: bridgeClient.handleDisconnect, Conn: conn}
@@ -33,6 +36,10 @@ func (bridgeClient *BridgeClient) Connect(host string, port int) (bool, error) {
 	go bridgeClient.protocolHandler.ReadAndUnpack(conn)
 	bridgeClient.startPing()
 	return true, nil
+}
+
+func (bridgeClient *BridgeClient) Close()  {
+	bridgeClient.conn.Close()
 }
 
 func (bridgeClient *BridgeClient) startPing() {
@@ -113,7 +120,7 @@ func (bridgeClient *BridgeClient) handleNotify(packet *core.Packet) {
 	switch packet.Cid {
 	case core.CommandPong:
 		fmt.Println("got pong")
-	case core.CommondForwardToLocal:
+	case core.CommandForwardToLocal:
 		bridgeClient.handleForwardToAgentChannel(packet)
 	default:
 		fmt.Printf("invalid notify request:%+v\n", packet)
@@ -163,4 +170,10 @@ func (bridgeClient *BridgeClient) GetAgentChannel(channelID uint32) *Agent {
 
 func (bridgeClient *BridgeClient) handleDisconnect() {
 	bridgeClient.stopPing()
+	bridgeClient.agentChannelMapLocker.Lock()
+	defer bridgeClient.agentChannelMapLocker.Unlock()
+	for _, agent := range bridgeClient.agentChannelMap {
+		agent.CloseAgent()
+	}
+	os.Exit(2)
 }
