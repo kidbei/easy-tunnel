@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"net"
 	"strconv"
 )
@@ -25,7 +25,7 @@ func NewAgent(channelID uint32, host string, port int, bridgeClient *BridgeClien
 
 	conn, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
-		fmt.Println("connect failed", err)
+		log.Println("connect failed", err)
 		return nil, err
 	}
 	agent.conn = conn
@@ -49,7 +49,7 @@ func (agent *Agent) handleConnection(conn net.Conn) {
 
 		readLen, err := conn.Read(buffer)
 		if err != nil {
-			fmt.Println("read from client error", err)
+			log.Println("read from client error", err)
 			break
 		}
 		data := buffer[0:readLen]
@@ -64,7 +64,7 @@ func (agent *Agent) ForwardToAgentChannel(data []byte) {
 
 //CloseAgent 主动关闭客户端到目标的连接
 func (agent *Agent) CloseAgent() {
-	fmt.Printf("close agent, channelID:%d, address:%s\n", agent.channelID, agent.conn.RemoteAddr().String())
+	log.Printf("close agent, channelID:%d, address:%s\n", agent.channelID, agent.conn.RemoteAddr().String())
 	agent.TunnelChannelClosed = true
 	agent.conn.Close()
 }

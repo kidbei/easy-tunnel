@@ -3,7 +3,7 @@ package core
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -94,10 +94,10 @@ func (protocolHandler *ProtocolHandler) ReadAndUnpack(conn net.Conn) {
 
 readLoop:
 	for {
-		buffer := make([]byte, 1024)
+		buffer := make([]byte, 65535)
 		readLen, err := conn.Read(buffer)
 		if err != nil {
-			fmt.Printf("bridge channel disconnect:%s, %+v\n", conn.RemoteAddr().String(), err)
+			log.Printf("bridge channel disconnect:%s, %+v\n", conn.RemoteAddr().String(), err)
 			if protocolHandler.DisconnectHandler != nil {
 				protocolHandler.DisconnectHandler()
 			}
@@ -164,7 +164,7 @@ func (protocolHandler *ProtocolHandler) gotPacket(packet *Packet) {
 			requestPacket.Success = packet.Success
 			requestPacket.Wg.Done()
 		} else {
-			fmt.Printf("got invalid response, may be it's timeout. %+v\n", packet)
+			log.Printf("got invalid response, may be it's timeout. %+v\n", packet)
 		}
 	} else if packet.Flag == NotifyFlag {
 		protocolHandler.NotifyHandler(packet)

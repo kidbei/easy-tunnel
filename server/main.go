@@ -1,6 +1,9 @@
 package main
 
-import "flag"
+import (
+	"flag"
+	"log"
+)
 
 var (
 	host *string
@@ -10,6 +13,9 @@ var (
 func init() {
 	host = flag.String("host", "0.0.0.0", "服务器通信ip")
 	port = flag.Int("port", 9960, "通信端口")
+
+	log.SetPrefix("TRACE: ")
+	log.SetFlags(log.Ldate | log.Lmicroseconds | log.Lshortfile)
 }
 
 func main() {

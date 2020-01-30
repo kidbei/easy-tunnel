@@ -3,13 +3,13 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
+	"github.com/kidbei/easy-tunnel/core"
+	"log"
 	"net"
 	"os"
 	"strconv"
 	"sync"
 	"time"
-	"github.com/kidbei/easy-tunnel/core"
 )
 
 //BridgeClient 客户端
@@ -25,7 +25,7 @@ type BridgeClient struct {
 func (bridgeClient *BridgeClient) Connect(host string, port int) (bool, error) {
 	conn, err := net.Dial("tcp", host+":"+strconv.Itoa(port))
 	if err != nil {
-		fmt.Println("connect failed", err)
+		log.Println("connect failed", err)
 		return false, err
 	}
 	bridgeClient.conn = conn
@@ -43,7 +43,7 @@ func (bridgeClient *BridgeClient) Close()  {
 }
 
 func (bridgeClient *BridgeClient) startPing() {
-	fmt.Println("start ping task")
+	log.Println("start ping task")
 	ticker := time.NewTicker(time.Second * 10)
 	stopChan := make(chan bool)
 	go func(ticker *time.Ticker) {
@@ -51,11 +51,11 @@ func (bridgeClient *BridgeClient) startPing() {
 		for {
 			select {
 			case <-ticker.C:
-				fmt.Println("send ping request")
+				log.Println("send ping request")
 				bridgeClient.Notify(core.CommandPing, nil)
 			case stop := <-stopChan:
 				if stop {
-					fmt.Println("stop ping task")
+					log.Println("stop ping task")
 					return
 				}
 			}
@@ -66,7 +66,7 @@ func (bridgeClient *BridgeClient) startPing() {
 
 func (bridgeClient *BridgeClient) stopPing() {
 	if bridgeClient.tickerChan != nil {
-		fmt.Println("stop ping")
+		log.Println("stop ping")
 		bridgeClient.tickerChan <- true
 	}
 }
@@ -89,7 +89,7 @@ func (bridgeClient *BridgeClient) ForwardToTunnel(channelID uint32, data []byte)
 
 //NotifyAgentChannelClosed x
 func (bridgeClient *BridgeClient) NotifyAgentChannelClosed(channelID uint32) {
-	fmt.Printf("notify agent channel closed event for channelID:%d\n", channelID)
+	log.Printf("notify agent channel closed event for channelID:%d\n", channelID)
 	bridgeClient.protocolHandler.Notify(core.CommandAgentChannelClosed, core.Uint32ToBytes(channelID))
 }
 
@@ -107,23 +107,25 @@ func (bridgeClient *BridgeClient) OpenTunnel(remoteBindHost string, remoteBindPo
 	if packet.Success == 0 {
 		return string(packet.Data), errors.New(string(packet.Data))
 	}
-	fmt.Printf("open tunnel success%s\n", string(bytes))
+	log.Printf("open tunnel success%s\n", string(bytes))
 	return "ok", nil
 }
 
 func (bridgeClient *BridgeClient) handleRequest(packet *core.Packet) (data []byte, err error) {
-	fmt.Printf("received:%+v\n", string(packet.Data))
+	log.Printf("received:%+v\n", string(packet.Data))
 	return packet.Data, nil
 }
 
 func (bridgeClient *BridgeClient) handleNotify(packet *core.Packet) {
 	switch packet.Cid {
 	case core.CommandPong:
-		fmt.Println("got pong")
+		log.Println("got pong")
 	case core.CommandForwardToLocal:
 		bridgeClient.handleForwardToAgentChannel(packet)
+	case core.CommandTunnelChannelClosed:
+		bridgeClient.handleTunnelChannelClosed(packet)
 	default:
-		fmt.Printf("invalid notify request:%+v\n", packet)
+		log.Printf("invalid notify request:%+v\n", packet)
 	}
 }
 
@@ -135,18 +137,27 @@ func (bridgeClient *BridgeClient) handleForwardToAgentChannel(packet *core.Packe
 
 	agent := bridgeClient.GetAgentChannel(channelID)
 	if agent == nil {
-		fmt.Printf("agent not found for channelID:%d\n", channelID)
+		log.Printf("agent not found for channelID:%d\n", channelID)
 		a, err := NewAgent(channelID, localHost, localPort, bridgeClient)
 		if err != nil {
-			fmt.Printf("connect to local failed, %s:%d, %+v\n", localHost, localPort, err)
+			log.Printf("connect to local failed, %s:%d, %+v\n", localHost, localPort, err)
 			bridgeClient.NotifyAgentChannelClosed(channelID)
 			return
 		}
-		fmt.Printf("new agent connection:%s:%d\n", localHost, localPort)
+		log.Printf("new agent connection:%s:%d\n", localHost, localPort)
 		agent = a
 		bridgeClient.AddAgentChannel(channelID, agent)
 	}
 	agent.ForwardToAgentChannel(data)
+}
+
+func (bridgeClient *BridgeClient) handleTunnelChannelClosed(packet *core.Packet)  {
+	channelID := core.BytesToUInt32(packet.Data)
+	agent := bridgeClient.GetAgentChannel(channelID)
+	if agent != nil {
+		log.Printf("close agent channel:%d\n", channelID)
+		agent.CloseAgent()
+	}
 }
 
 //AddAgentChannel x

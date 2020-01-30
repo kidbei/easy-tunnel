@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"sync"
@@ -50,7 +50,7 @@ func NewTunnel(host string, port int, localHost string, localPort int,
 		for {
 			conn, e := server.Accept()
 			if e != nil {
-				fmt.Println("accept error", e)
+				log.Println("accept error", e)
 				break
 			}
 			go tunnel.handleConnection(conn)
@@ -61,7 +61,7 @@ func NewTunnel(host string, port int, localHost string, localPort int,
 }
 
 func (tunnel *Tunnel) handleConnection(conn net.Conn) {
-	fmt.Printf("new tunnel connection %s\n", conn.RemoteAddr().String())
+	log.Printf("new tunnel connection %s\n", conn.RemoteAddr().String())
 
 	channelID := atomic.AddUint32(&tunnel.channelIDAtom, 1)
 	tunnelChannel := tunnel.AddTunnelChannel(channelID, conn)
@@ -75,7 +75,7 @@ func (tunnel *Tunnel) handleConnection(conn net.Conn) {
 
 		readLen, err := conn.Read(buffer)
 		if err != nil {
-			fmt.Println("read from client error", err)
+			log.Println("read from client error", err)
 			break
 		}
 		data := buffer[0:readLen]
@@ -90,7 +90,7 @@ func (tunnel *Tunnel) handleConnection(conn net.Conn) {
 func (tunnel *Tunnel) CloseTunnelChannel(channelID uint32) {
 	tunnelChannel := tunnel.GetTunnelChannel(channelID)
 	if tunnelChannel != nil {
-		fmt.Printf("close tunnel channel, ChannelID:%d, address:%s\n", channelID, tunnelChannel.Conn.RemoteAddr().String())
+		log.Printf("close tunnel channel, ChannelID:%d, address:%s\n", channelID, tunnelChannel.Conn.RemoteAddr().String())
 		tunnelChannel.AgentClosed = true
 		tunnelChannel.Conn.Close()
 	}
@@ -98,7 +98,7 @@ func (tunnel *Tunnel) CloseTunnelChannel(channelID uint32) {
 
 //CloseTunnel 关闭所有连接
 func (tunnel *Tunnel) CloseTunnel() {
-	fmt.Printf("close tunnel:%s\n", tunnel.listener.Addr().String())
+	log.Printf("close tunnel:%s\n", tunnel.listener.Addr().String())
 	tunnel.tunnelChannelMapLocker.Lock()
 	defer tunnel.tunnelChannelMapLocker.Unlock()
 	tunnel.listener.Close()
@@ -111,7 +111,7 @@ func (tunnel *Tunnel) CloseTunnel() {
 func (tunnel *Tunnel) ForwardToTunnel(channelID uint32, data []byte) {
 	tunnelChannel := tunnel.GetTunnelChannel(channelID)
 	if tunnelChannel == nil {
-		fmt.Printf("tunnel channel is not found for ChannelID:%d\n", channelID)
+		log.Printf("tunnel channel is not found for ChannelID:%d\n", channelID)
 		return
 	}
 	tunnelChannel.Conn.Write(data)

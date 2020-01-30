@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	"log"
 	"os"
 	"os/signal"
 )
@@ -23,6 +23,9 @@ func init() {
 	remoteBindPort = flag.Int("bp", -1, "远程开启的映射端口,必填")
 	localHost = flag.String("fh", "127.0.0.1", "转发目标ip")
 	localPort = flag.Int("fp", -1, "转发目标端口,必填")
+
+	log.SetPrefix("TRACE: ")
+	log.SetFlags(log.Ldate | log.Lmicroseconds | log.Lshortfile)
 }
 
 func main() {
@@ -48,6 +51,6 @@ func main() {
 	c := make(chan os.Signal)
 	signal.Notify(c)
 	s := <-c
-	fmt.Println("exit", s)
+	log.Println("exit", s)
 	bridgeClient.Close()
 }
