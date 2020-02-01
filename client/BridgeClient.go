@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/kidbei/easy-tunnel/core"
+	"github.com/xtaci/kcp-go"
 	"log"
 	"net"
 	"os"
@@ -18,27 +19,52 @@ type BridgeClient struct {
 	protocolHandler       *core.ProtocolHandler
 	agentChannelMap       map[uint32]*Agent
 	agentChannelMapLocker sync.Mutex
-	conn				  net.Conn
+	conn                  net.Conn
+	protocol			  string
+}
+
+func NewBridgeClient(protocol string) *BridgeClient {
+	client := &BridgeClient{}
+
+	client.agentChannelMap = make(map[uint32]*Agent)
+
+	client.protocol = protocol
+
+	return client
 }
 
 //Connect 连接服务端
 func (bridgeClient *BridgeClient) Connect(host string, port int) (bool, error) {
-	conn, err := net.Dial("tcp", host+":"+strconv.Itoa(port))
+	var (
+		conn net.Conn
+		err error
+	)
+
+	switch bridgeClient.protocol {
+	case "tcp":
+		conn, err = net.Dial("tcp", host+":"+strconv.Itoa(port))
+	case "kcp":
+		conn, err = kcp.Dial(host+":"+strconv.Itoa(port))
+	default:
+		log.Panicln("unknown protocol:", bridgeClient.protocol)
+	}
+
 	if err != nil {
 		log.Println("connect failed", err)
 		return false, err
 	}
 	bridgeClient.conn = conn
-	bridgeClient.agentChannelMap = make(map[uint32]*Agent)
-	bridgeClient.protocolHandler = &core.ProtocolHandler{RequestHandler: bridgeClient.handleRequest,
-		NotifyHandler: bridgeClient.handleNotify, DisconnectHandler: bridgeClient.handleDisconnect, Conn: conn}
-	bridgeClient.protocolHandler.Init()
-	go bridgeClient.protocolHandler.ReadAndUnpack(conn)
-	bridgeClient.startPing()
+	bridgeClient.protocolHandler = core.NewProtocolHandler(bridgeClient.protocol, conn)
+	bridgeClient.protocolHandler.NotifyHandler = bridgeClient.handleNotify
+	bridgeClient.protocolHandler.RequestHandler = bridgeClient.handleRequest
+	bridgeClient.protocolHandler.DisconnectHandler = bridgeClient.handleDisconnect
+	bridgeClient.protocolHandler.Conn = conn
+	go bridgeClient.protocolHandler.ReadPacket(conn)
+	//bridgeClient.startPing()
 	return true, nil
 }
 
-func (bridgeClient *BridgeClient) Close()  {
+func (bridgeClient *BridgeClient) Close() {
 	bridgeClient.conn.Close()
 }
 
@@ -151,7 +177,7 @@ func (bridgeClient *BridgeClient) handleForwardToAgentChannel(packet *core.Packe
 	agent.ForwardToAgentChannel(data)
 }
 
-func (bridgeClient *BridgeClient) handleTunnelChannelClosed(packet *core.Packet)  {
+func (bridgeClient *BridgeClient) handleTunnelChannelClosed(packet *core.Packet) {
 	channelID := core.BytesToUInt32(packet.Data)
 	agent := bridgeClient.GetAgentChannel(channelID)
 	if agent != nil {

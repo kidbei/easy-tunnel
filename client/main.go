@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"time"
 )
 
 var (
@@ -14,6 +15,7 @@ var (
 	remoteBindPort *int
 	localHost      *string
 	localPort      *int
+	protocol	   *string
 )
 
 func init() {
@@ -22,6 +24,7 @@ func init() {
 	remoteBindHost = flag.String("bh", "0.0.0.0", "开启映射后绑定ip")
 	remoteBindPort = flag.Int("bp", -1, "远程开启的映射端口,必填")
 	localHost = flag.String("fh", "127.0.0.1", "转发目标ip")
+	protocol = flag.String("protocol", "tcp", "通信协议\n  tcp\n  kcp:浪费30%左右的带宽提高20%的性能")
 	localPort = flag.Int("fp", -1, "转发目标端口,必填")
 
 	log.SetPrefix("TRACE: ")
@@ -38,7 +41,7 @@ func main() {
 		panic("bport参数必填")
 	}
 
-	bridgeClient := &BridgeClient{}
+	bridgeClient := NewBridgeClient(*protocol)
 	success, err := bridgeClient.Connect(*remoteHost, *remotePort)
 	if !success {
 		panic(err)
@@ -47,6 +50,8 @@ func main() {
 	if e != nil {
 		panic(msg)
 	}
+
+	time.Sleep(time.Hour * 1)
 
 	c := make(chan os.Signal)
 	signal.Notify(c)

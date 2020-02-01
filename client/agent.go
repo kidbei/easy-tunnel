@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/kidbei/easy-tunnel/core"
 	"log"
 	"net"
 	"strconv"
@@ -44,15 +45,16 @@ func (agent *Agent) handleConnection(conn net.Conn) {
 		}
 	}()
 	defer agent.bridgeClient.DeleteAgentChannel(agent.channelID)
+	buffer := make([]byte, core.MaxChannelDataSize)
+
 	for {
-		buffer := make([]byte, 1024)
 
 		readLen, err := conn.Read(buffer)
 		if err != nil {
 			log.Println("read from client error", err)
 			break
 		}
-		data := buffer[0:readLen]
+		data := buffer[:readLen]
 		agent.bridgeClient.ForwardToTunnel(agent.channelID, data)
 	}
 }

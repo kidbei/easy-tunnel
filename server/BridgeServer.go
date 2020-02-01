@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/kidbei/easy-tunnel/core"
+	"github.com/xtaci/kcp-go"
 	"log"
 	"net"
 	"strconv"
@@ -12,56 +13,86 @@ import (
 
 //BridgeServer 连接客户端通道
 type BridgeServer struct {
-	Host string
-	Port int
+	Host     string
+	Port     int
+	Protocol string
 }
 
 //BridgeChannel 客户端连接
 type BridgeChannel struct {
 	conn                  net.Conn
-	protocolHandler       *core.ProtocolHandler
 	channelIDTunnelMap    map[uint32]*Tunnel
 	channelIDTunnelLocker sync.Mutex
-	tunnels				  map[uint32]*Tunnel
+	tunnels               map[uint32]*Tunnel
+	protocolHandler       *core.ProtocolHandler
 }
 
 //Start start bridge server
 func (bridgeServer BridgeServer) Start() {
+	kcp.Listen("")
+	switch bridgeServer.Protocol {
+	case "tcp":
+		bridgeServer.startTcpServer()
+	case "kcp":
+		bridgeServer.startKcpServer()
+	default:
+		log.Panicln("unknown protocol", bridgeServer.Protocol)
+	}
+}
+
+func (bridgeServer *BridgeServer) startTcpServer() {
 	server, e := net.Listen("tcp", bridgeServer.Host+":"+strconv.Itoa(bridgeServer.Port))
 	if e != nil {
-		log.Println("start birdge server failed", e)
-		log.Panicln("start bridge server failed")
+		log.Panicln("start bridge server failed", e)
 	}
-
-	defer server.Close()
 
 	log.Printf("start bridge server success at %s:%d\n", bridgeServer.Host, bridgeServer.Port)
 
+	defer server.Close()
 	for {
 		conn, err := server.Accept()
 		if err != nil {
 			log.Println("accept error", err)
 		} else {
-			go bridgeServer.handleBridgeConnection(conn)
+			go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(bridgeServer.Protocol, conn))
 		}
 	}
 }
 
-func (bridgeServer *BridgeServer) handleBridgeConnection(conn net.Conn) {
-	channel := &BridgeChannel{channelIDTunnelMap: make(map[uint32]*Tunnel), tunnels:make(map[uint32]*Tunnel)}
-	channel.conn = conn
-	channel.protocolHandler = &core.ProtocolHandler{RequestHandler: channel.handleRequest,
-		NotifyHandler: channel.handleNotify, Conn: conn, DisconnectHandler:channel.disconnectHandler}
-	channel.protocolHandler.Init()
+func (bridgeServer *BridgeServer) startKcpServer() {
+	listen, err := kcp.Listen(bridgeServer.Host + ":" + strconv.Itoa(bridgeServer.Port))
+	if err != nil {
+		log.Panicln("failed to start kcp server", err)
+	}
+	log.Printf("start kcp server at %s:%d\n", bridgeServer.Host, bridgeServer.Port)
 
-	channel.protocolHandler.ReadAndUnpack(conn)
+	defer listen.Close()
+
+	for {
+		conn, e := listen.Accept()
+		if e != nil {
+			log.Println("accept error", e)
+		} else {
+			go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(bridgeServer.Protocol, conn))
+		}
+	}
 }
 
+func (bridgeServer *BridgeServer) handleBridgeConnection(conn net.Conn, protocolHandler *core.ProtocolHandler) {
+	channel := &BridgeChannel{channelIDTunnelMap: make(map[uint32]*Tunnel), tunnels: make(map[uint32]*Tunnel)}
+	channel.conn = conn
+	channel.protocolHandler = protocolHandler
+	channel.protocolHandler.RequestHandler = channel.handleRequest
+	channel.protocolHandler.DisconnectHandler = channel.disconnectHandler
+	channel.protocolHandler.Conn = conn
+	channel.protocolHandler.NotifyHandler = channel.handleNotify
+	channel.protocolHandler.ReadPacket(conn)
+}
 
 func (bridgeChannel *BridgeChannel) disconnectHandler() {
 	bridgeChannel.channelIDTunnelLocker.Lock()
 	defer bridgeChannel.channelIDTunnelLocker.Unlock()
-	for _,tunnel := range bridgeChannel.tunnels {
+	for _, tunnel := range bridgeChannel.tunnels {
 		tunnel.CloseTunnel()
 	}
 	bridgeChannel.tunnels = make(map[uint32]*Tunnel)
@@ -97,7 +128,7 @@ func (bridgeChannel *BridgeChannel) handleOpenTunnel(packet *core.Packet) (data 
 	openTunnelReq := &core.OpenTunnelReq{}
 	e := json.Unmarshal(packet.Data, openTunnelReq)
 	if e != nil {
-		log.Printf("invalid request params:%s,error:%+v\n", string(packet.Data),e)
+		log.Printf("invalid request params:%s,error:%+v\n", string(packet.Data), e)
 		return []byte("invalid request params"), e
 	}
 	log.Printf("open tunnel:%+v\n", openTunnelReq)
