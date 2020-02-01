@@ -3,20 +3,18 @@ package core
 import (
 	"bytes"
 	"encoding/binary"
-	"log"
-	"net"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 )
 
 const (
 	//CurrentVersion 当前版本
 	CurrentVersion = byte(1)
 	//MaxChannelDataSize 最大数据包长度
-	MaxChannelDataSize int32 = 1024 * 1024
+	MaxChannelDataSize int32 = 65536
+	//MaxFrameSize 发送方式为帧时最大数据包大小
+	MaxFrameSize = 65000
 	//RequestFlag 请求标记
 	RequestFlag = uint8(1)
 	//ResponseFlag 返回标记
@@ -45,8 +43,6 @@ const (
 
 //Packet 数据包
 type Packet struct {
-	//包长 包含当前4字节
-	Len uint32
 	//协议版本号
 	Ver uint8
 	//标志位，用来标记是否需要返回等
@@ -73,148 +69,9 @@ type OpenTunnelReq struct {
 	LocalPort int
 }
 
-//ProtocolHandler 解包类
-type ProtocolHandler struct {
-	packetLen         uint32
-	dataBuffer        []byte
-	RequestHandler    func(*Packet) (data []byte, err error)
-	NotifyHandler     func(*Packet)
-	DisconnectHandler func()
-	Conn              net.Conn
-	curReqID          uint32
-	pendingMap        map[uint32]*Packet
-}
-
-func (protocolHandler *ProtocolHandler) Init() {
-	protocolHandler.pendingMap = make(map[uint32]*Packet)
-}
-
-func (protocolHandler *ProtocolHandler) ReadAndUnpack(conn net.Conn) {
-	defer conn.Close()
-
-readLoop:
-	for {
-		buffer := make([]byte, 65535)
-		readLen, err := conn.Read(buffer)
-		if err != nil {
-			log.Printf("bridge channel disconnect:%s, %+v\n", conn.RemoteAddr().String(), err)
-			if protocolHandler.DisconnectHandler != nil {
-				protocolHandler.DisconnectHandler()
-			}
-			break
-		}
-		if protocolHandler.dataBuffer == nil {
-			protocolHandler.dataBuffer = buffer[0:readLen]
-		} else {
-			protocolHandler.dataBuffer = append(protocolHandler.dataBuffer, buffer[0:readLen]...)
-		}
-	unpack:
-		for {
-			if protocolHandler.packetLen == 0 {
-				protocolHandler.packetLen = BytesToUInt32(protocolHandler.dataBuffer[0:4])
-				if protocolHandler.packetLen == 0 {
-				}
-			}
-			if len(protocolHandler.dataBuffer) < int(protocolHandler.packetLen) {
-				continue readLoop
-			}
-			packet := &Packet{}
-			packet.Len = protocolHandler.packetLen
-			packet.Ver = BytesToUInt8(protocolHandler.dataBuffer[4:5])
-			packet.Flag = BytesToUInt8(protocolHandler.dataBuffer[5:6])
-			packet.Req = BytesToUInt32(protocolHandler.dataBuffer[6:10])
-			if packet.Flag != ResponseFlag {
-				packet.Cid = BytesToUInt8(protocolHandler.dataBuffer[10:11])
-			} else {
-				packet.Success = BytesToUInt8(protocolHandler.dataBuffer[10:11])
-			}
-			packet.Data = protocolHandler.dataBuffer[11:protocolHandler.packetLen]
-
-			protocolHandler.gotPacket(packet)
-
-			packetLen := int(protocolHandler.packetLen)
-			protocolHandler.packetLen = 0
-			if packetLen == len(protocolHandler.dataBuffer) {
-				protocolHandler.dataBuffer = nil
-				break unpack
-			} else {
-				protocolHandler.dataBuffer = protocolHandler.dataBuffer[packetLen:len(protocolHandler.dataBuffer)]
-			}
-		}
-	}
-}
-
-//gotPacket 解出完整数据包
-func (protocolHandler *ProtocolHandler) gotPacket(packet *Packet) {
-	if packet.Flag == RequestFlag {
-		data, err := protocolHandler.RequestHandler(packet)
-		var success uint8
-		if err != nil {
-			success = uint8(0)
-		} else {
-			success = uint8(1)
-		}
-		protocolHandler.SendResponse(success, data, packet.Req)
-	} else if packet.Flag == ResponseFlag {
-		requestPacket := protocolHandler.pendingMap[packet.Req]
-		if requestPacket != nil {
-			requestPacket.Data = packet.Data
-			requestPacket.Flag = ResponseFlag
-			requestPacket.Len = packet.Len
-			requestPacket.Success = packet.Success
-			requestPacket.Wg.Done()
-		} else {
-			log.Printf("got invalid response, may be it's timeout. %+v\n", packet)
-		}
-	} else if packet.Flag == NotifyFlag {
-		protocolHandler.NotifyHandler(packet)
-	}
-}
-
-func (protocolHandler *ProtocolHandler) generateID() uint32 {
-	return atomic.AddUint32(&protocolHandler.curReqID, 1)
-}
-
-//Send 发送请求等待返回
-func (protocolHandler *ProtocolHandler) Send(cid uint8, data []byte) (*Packet, error) {
-	wg := sync.WaitGroup{}
-	tLen := ProtocolReqHeaderLen + len(data)
-	ver := CurrentVersion
-	flag := RequestFlag
-	reqID := protocolHandler.generateID()
-	sendPacket := &Packet{Len: uint32(tLen), Ver: ver, Flag: flag, Req: reqID, Cid: cid, Data: data, Wg: &wg, ReqTime: time.Now().Unix()}
-	packetData := PacketToBytes(sendPacket)
-	protocolHandler.pendingMap[reqID] = sendPacket
-	wg.Add(1)
-	protocolHandler.Conn.Write(packetData)
-	wg.Wait()
-	return sendPacket, nil
-}
-
-//Notify 发送请求，不需要返回
-func (protocolHandler *ProtocolHandler) Notify(cid uint8, data []byte) {
-	tLen := ProtocolReqHeaderLen + len(data)
-	ver := CurrentVersion
-	flag := NotifyFlag
-	reqID := protocolHandler.generateID()
-	packet := &Packet{Len: uint32(tLen), Ver: ver, Flag: flag, Req: reqID, Cid: cid, Data: data, ReqTime: time.Now().Unix()}
-	packetData := PacketToBytes(packet)
-	protocolHandler.Conn.Write(packetData)
-}
-
-func (protocolHandler *ProtocolHandler) SendResponse(success uint8, data []byte, reqID uint32) {
-	len := ProtocolRespHeaderLen + len(data)
-	ver := CurrentVersion
-	flag := ResponseFlag
-	packet := &Packet{Len: uint32(len), Ver: ver, Flag: flag, Success: success, Req: reqID, Data: data}
-	packetData := PacketToBytes(packet)
-	protocolHandler.Conn.Write(packetData)
-}
-
 //PacketToBytes 封包
 func PacketToBytes(packet *Packet) []byte {
 	buffer := new(bytes.Buffer)
-	buffer.Write(Uint32ToBytes(packet.Len))
 	buffer.Write([]byte{packet.Ver})
 	buffer.Write([]byte{packet.Flag})
 	buffer.Write(Uint32ToBytes(packet.Req))
@@ -314,4 +171,23 @@ func IPIntToString(ipInt int) string {
 		}
 	}
 	return buffer.String()
+}
+
+func SplitArray(array []byte, size int) [][]byte {
+	if len(array) <= size {
+		return [][]byte{array}
+	}
+	var divided [][]byte
+
+	for i := 0; i < len(array); i += size {
+		end := i + size
+
+		if end > len(array) {
+			end = len(array)
+		}
+
+		divided = append(divided, array[i:end])
+	}
+
+	return divided
 }
