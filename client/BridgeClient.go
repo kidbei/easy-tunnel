@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/kidbei/easy-tunnel/core"
-	"github.com/xtaci/kcp-go"
 	"log"
 	"net"
 	"os"
@@ -20,15 +19,12 @@ type BridgeClient struct {
 	agentChannelMap       map[uint32]*Agent
 	agentChannelMapLocker sync.Mutex
 	conn                  net.Conn
-	protocol			  string
 }
 
 func NewBridgeClient(protocol string) *BridgeClient {
 	client := &BridgeClient{}
 
 	client.agentChannelMap = make(map[uint32]*Agent)
-
-	client.protocol = protocol
 
 	return client
 }
@@ -40,21 +36,14 @@ func (bridgeClient *BridgeClient) Connect(host string, port int) (bool, error) {
 		err error
 	)
 
-	switch bridgeClient.protocol {
-	case "tcp":
-		conn, err = net.Dial("tcp", host+":"+strconv.Itoa(port))
-	case "kcp":
-		conn, err = kcp.Dial(host+":"+strconv.Itoa(port))
-	default:
-		log.Panicln("unknown protocol:", bridgeClient.protocol)
-	}
+	conn, err = net.Dial("tcp", host+":"+strconv.Itoa(port))
 
 	if err != nil {
 		log.Println("connect failed", err)
 		return false, err
 	}
 	bridgeClient.conn = conn
-	bridgeClient.protocolHandler = core.NewProtocolHandler(bridgeClient.protocol, conn)
+	bridgeClient.protocolHandler = core.NewProtocolHandler(conn)
 	bridgeClient.protocolHandler.NotifyHandler = bridgeClient.handleNotify
 	bridgeClient.protocolHandler.RequestHandler = bridgeClient.handleRequest
 	bridgeClient.protocolHandler.DisconnectHandler = bridgeClient.handleDisconnect

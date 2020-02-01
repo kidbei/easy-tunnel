@@ -15,7 +15,6 @@ import (
 type BridgeServer struct {
 	Host     string
 	Port     int
-	Protocol string
 }
 
 //BridgeChannel 客户端连接
@@ -29,15 +28,7 @@ type BridgeChannel struct {
 
 //Start start bridge server
 func (bridgeServer BridgeServer) Start() {
-	kcp.Listen("")
-	switch bridgeServer.Protocol {
-	case "tcp":
-		bridgeServer.startTcpServer()
-	case "kcp":
-		bridgeServer.startKcpServer()
-	default:
-		log.Panicln("unknown protocol", bridgeServer.Protocol)
-	}
+	bridgeServer.startTcpServer()
 }
 
 func (bridgeServer *BridgeServer) startTcpServer() {
@@ -54,7 +45,7 @@ func (bridgeServer *BridgeServer) startTcpServer() {
 		if err != nil {
 			log.Println("accept error", err)
 		} else {
-			go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(bridgeServer.Protocol, conn))
+			go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(conn))
 		}
 	}
 }
@@ -73,7 +64,7 @@ func (bridgeServer *BridgeServer) startKcpServer() {
 		if e != nil {
 			log.Println("accept error", e)
 		} else {
-			go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(bridgeServer.Protocol, conn))
+			go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(conn))
 		}
 	}
 }

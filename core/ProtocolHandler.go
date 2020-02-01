@@ -19,14 +19,13 @@ type ProtocolHandler struct {
 	Conn              net.Conn
 	CurReqID          uint32
 	PendingMap        map[uint32]*Packet
-	protocolType      string
 	encodeConfig      goframe.EncoderConfig
 	decodeConfig      goframe.DecoderConfig
 	frameConn         goframe.FrameConn
 }
 
-func NewProtocolHandler(protocol string, conn net.Conn) *ProtocolHandler {
-	protocolHandler := &ProtocolHandler{protocolType: protocol}
+func NewProtocolHandler(conn net.Conn) *ProtocolHandler {
+	protocolHandler := &ProtocolHandler{}
 	protocolHandler.PendingMap = make(map[uint32]*Packet)
 
 	protocolHandler.encodeConfig = goframe.EncoderConfig{
