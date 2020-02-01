@@ -13,18 +13,12 @@ const (
 	CurrentVersion = byte(1)
 	//MaxChannelDataSize 最大数据包长度
 	MaxChannelDataSize int32 = 65536
-	//MaxFrameSize 发送方式为帧时最大数据包大小
-	MaxFrameSize = 65000
 	//RequestFlag 请求标记
 	RequestFlag = uint8(1)
 	//ResponseFlag 返回标记
 	ResponseFlag = uint8(2)
 	//NotifyFlag 不需要返回的请求
 	NotifyFlag = uint8(3)
-	//ProtocolReqHeaderLen 请求协议头部长度
-	ProtocolReqHeaderLen = 11
-	//ProtocolRespHeaderLen 返回协议头部长度
-	ProtocolRespHeaderLen = 11
 	//CommandPing ping请求指令
 	CommandPing = 1
 	//CommandPong pong返回指令
