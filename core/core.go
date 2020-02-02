@@ -19,6 +19,11 @@ const (
 	ResponseFlag = uint8(2)
 	//NotifyFlag 不需要返回的请求
 	NotifyFlag = uint8(3)
+
+	TunnelTypeTcp = "tcp"
+
+	TunnelTypeUdp = "udp"
+
 	//CommandPing ping请求指令
 	CommandPing = 1
 	//CommandPong pong返回指令
@@ -57,10 +62,11 @@ type Packet struct {
 
 //OpenTunnelReq 开启端口映射请求体
 type OpenTunnelReq struct {
-	BindHost  string
-	BindPort  int
-	LocalHost string
-	LocalPort int
+	BindHost   string
+	BindPort   int
+	LocalHost  string
+	LocalPort  int
+	TunnelType string
 }
 
 //PacketToBytes 封包

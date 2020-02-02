@@ -15,6 +15,7 @@ var (
 	remoteBindPort *int
 	localHost      *string
 	localPort      *int
+	tunnelType	   *string
 )
 
 func init() {
@@ -24,6 +25,7 @@ func init() {
 	remoteBindPort = flag.Int("bp", -1, "远程开启的映射端口,必填")
 	localHost = flag.String("fh", "127.0.0.1", "转发目标ip")
 	localPort = flag.Int("fp", -1, "转发目标端口,必填")
+	tunnelType = flag.String("protocol", "tcp", "映射通信协议")
 
 	log.SetPrefix("TRACE: ")
 	log.SetFlags(log.Ldate | log.Lmicroseconds | log.Lshortfile)
@@ -44,7 +46,7 @@ func main() {
 	if !success {
 		panic(err)
 	}
-	msg, e := bridgeClient.OpenTunnel(*remoteBindHost, *remoteBindPort, *localHost, *localPort)
+	msg, e := bridgeClient.OpenTunnel(*remoteBindHost, *remoteBindPort, *localHost, *localPort, *tunnelType)
 	if e != nil {
 		panic(msg)
 	}

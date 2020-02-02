@@ -27,6 +27,7 @@ type RemoteTunnel struct {
 	LocalPort             int
 	agentChannelMap       map[uint32]*Agent
 	agentChannelMapLocker sync.Mutex
+	TunnelType            string
 }
 
 func NewBridgeClient() *BridgeClient {
@@ -117,10 +118,10 @@ func (bridgeClient *BridgeClient) NotifyAgentChannelClosed(channelID uint32, tun
 
 //OpenTunnel 开启端口映射
 func (bridgeClient *BridgeClient) OpenTunnel(remoteBindHost string, remoteBindPort int,
-	localHost string, localPort int) (tunnel *RemoteTunnel, err error) {
+	localHost string, localPort int, tunnelType string) (tunnel *RemoteTunnel, err error) {
 
 	openTunnelReq := core.OpenTunnelReq{BindHost: remoteBindHost, BindPort: remoteBindPort,
-		LocalHost: localHost, LocalPort: localPort}
+		LocalHost: localHost, LocalPort: localPort, TunnelType: tunnelType}
 	bytes, _ := json.Marshal(openTunnelReq)
 	packet, e := bridgeClient.Send(core.CommandOpenTunnel, bytes)
 	if e != nil {
@@ -132,7 +133,7 @@ func (bridgeClient *BridgeClient) OpenTunnel(remoteBindHost string, remoteBindPo
 	log.Printf("open tunnel success%s\n", string(bytes))
 
 	tunnelID := core.BytesToUInt32(packet.Data)
-	remoteTunnel := RemoteTunnel{TunnelId: tunnelID, LocalHost: localHost, LocalPort: localPort}
+	remoteTunnel := RemoteTunnel{TunnelId: tunnelID, LocalHost: localHost, LocalPort: localPort, TunnelType: tunnelType}
 	remoteTunnel.agentChannelMap = make(map[uint32]*Agent)
 
 	bridgeClient.addRemoteTunnel(tunnelID, remoteTunnel)
@@ -172,22 +173,29 @@ func (bridgeClient *BridgeClient) handleForwardToAgentChannel(packet *core.Packe
 	agent := tunnel.GetAgentChannel(channelID)
 	if agent == nil {
 		log.Printf("agent not found for channelID:%d\n", channelID)
-		a, err := NewAgent(channelID, tunnel.LocalHost, tunnel.LocalPort, tunnelID)
+
+		if tunnel.TunnelType == core.TunnelTypeTcp {
+			agent = &TcpAgent{AgentProperty: AgentProperty{ChannelID: channelID, LocalHost: tunnel.LocalHost,
+				LocalPort: tunnel.LocalPort, TunnelID: tunnelID}}
+		}
+
+		err := agent.Connect(tunnel.LocalHost, tunnel.LocalPort)
+
 		if err != nil {
-			log.Printf("connect to local failed, %s:%d, %+v\n", agent.LocalHost, agent.LocalPort, err)
+			log.Printf("connect to local failed, %s, %+v\n", agent.GetRemoteAddrStr(), err)
 			bridgeClient.NotifyAgentChannelClosed(channelID, tunnelID)
 			return
 		}
-		agent = a
-		log.Printf("new agent connection:%s:%d\n", agent.LocalHost, agent.LocalPort)
-		agent.DisconnectHandler = func() {
+
+		log.Printf("new agent connection:%s\n", agent.GetRemoteAddrStr())
+		agent.SetDisconnectHandler(func() {
 			bridgeClient.NotifyAgentChannelClosed(channelID, tunnelID)
 			tunnel.DeleteAgentChannel(channelID)
-		}
-		agent.DataReceivedHandler = func(bytes []byte) {
+		})
+		agent.SetDataReceivedHandler(func(bytes []byte) {
 			bridgeClient.ForwardToTunnel(channelID, tunnelID, bytes)
-		}
-		tunnel.AddAgentChannel(channelID, agent)
+		})
+		tunnel.AddAgentChannel(channelID, &agent)
 	}
 	agent.ForwardToAgentChannel(data)
 }
@@ -206,7 +214,7 @@ func (bridgeClient *BridgeClient) handleTunnelChannelClosed(packet *core.Packet)
 	if agent != nil {
 		log.Printf("close agent channel:%d, tunnelID:%d\n", channelID, tunnelID)
 		defer tunnel.DeleteAgentChannel(channelID)
-		agent.CloseAgent()
+		agent.Close()
 	}
 }
 
@@ -225,8 +233,11 @@ func (tunnel *RemoteTunnel) DeleteAgentChannel(channelID uint32) {
 }
 
 //GetAgentChannel x
-func (tunnel *RemoteTunnel) GetAgentChannel(channelID uint32) *Agent {
-	return tunnel.agentChannelMap[channelID]
+func (tunnel *RemoteTunnel) GetAgentChannel(channelID uint32) Agent {
+	if agent, exist := tunnel.agentChannelMap[channelID]; exist {
+		return *agent
+	}
+	return nil
 }
 
 func (bridgeClient *BridgeClient) addRemoteTunnel(tunnelID uint32, tunnel RemoteTunnel) {
@@ -246,9 +257,10 @@ func (bridgeClient *BridgeClient) handleDisconnect() {
 	bridgeClient.stopPing()
 
 	for _, tunnel := range bridgeClient.remoteTunnelMap {
-		for _, agent := range tunnel.agentChannelMap {
-			agent.CloseAgent()
-			tunnel.DeleteAgentChannel(agent.channelID)
+		for channelID, _ := range tunnel.agentChannelMap {
+			agent := *tunnel.agentChannelMap[channelID]
+			agent.Close()
+			tunnel.DeleteAgentChannel(channelID)
 		}
 	}
 

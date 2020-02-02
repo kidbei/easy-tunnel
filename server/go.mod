@@ -2,7 +2,7 @@ module server
 
 go 1.13
 
-replace github.com/kidbei/easy-tunnel/core => /Users/kidbei/IdeaProjects/github/easy-tunnel/core
+replace github.com/kidbei/easy-tunnel/core => ../core
 
 require (
 	github.com/kidbei/easy-tunnel/core v0.0.0-00010101000000-000000000000
@@ -13,6 +13,7 @@ require (
 	github.com/templexxx/xor v0.0.0-20191217153810-f85b25db303b // indirect
 	github.com/tjfoc/gmsm v1.2.0 // indirect
 	github.com/xtaci/kcp-go v5.4.20+incompatible
+	github.com/xtaci/lossyconn v0.0.0-20190602105132-8df528c0c9ae // indirect
 	golang.org/x/crypto v0.0.0-20200128174031-69ecbb4d6d5d // indirect
 	golang.org/x/net v0.0.0-20200114155413-6afb5195e5aa // indirect
 )

@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 )
 
 //BridgeServer 连接客户端通道
@@ -23,12 +24,15 @@ type BridgeChannel struct {
 	tunnelIDTunnelMap    map[uint32]*Tunnel
 	tunnelIDTunnelLocker sync.Mutex
 	protocolHandler      *core.ProtocolHandler
+	tunnelIDAtom 		uint32
 }
 
 //Start start bridge server
 func (bridgeServer BridgeServer) Start() {
 	bridgeServer.startTcpServer()
 }
+
+
 
 func (bridgeServer *BridgeServer) startTcpServer() {
 	server, e := net.Listen("tcp", bridgeServer.Host+":"+strconv.Itoa(bridgeServer.Port))
@@ -69,7 +73,7 @@ func (bridgeServer *BridgeServer) startKcpServer() {
 }
 
 func (bridgeServer *BridgeServer) handleBridgeConnection(conn net.Conn, protocolHandler *core.ProtocolHandler) {
-	channel := &BridgeChannel{tunnelIDTunnelMap: make(map[uint32]*Tunnel)}
+	channel := &BridgeChannel{tunnelIDTunnelMap: make(map[uint32]*Tunnel), tunnelIDAtom: uint32(1)}
 	channel.conn = conn
 	channel.protocolHandler = protocolHandler
 	channel.protocolHandler.RequestHandler = channel.handleRequest
@@ -82,8 +86,9 @@ func (bridgeServer *BridgeServer) handleBridgeConnection(conn net.Conn, protocol
 func (bridgeChannel *BridgeChannel) disconnectHandler() {
 	bridgeChannel.tunnelIDTunnelLocker.Lock()
 	defer bridgeChannel.tunnelIDTunnelLocker.Unlock()
-	for _, tunnel := range bridgeChannel.tunnelIDTunnelMap {
-		tunnel.CloseTunnel()
+	for tunnelID, _ := range bridgeChannel.tunnelIDTunnelMap {
+		tunnel := *bridgeChannel.GetChannelTunnel(tunnelID)
+		tunnel.Close()
 	}
 	bridgeChannel.tunnelIDTunnelMap = make(map[uint32]*Tunnel)
 }
@@ -95,7 +100,7 @@ func (bridgeChannel *BridgeChannel) handleRequest(packet *core.Packet) (data []b
 		return bridgeChannel.handleOpenTunnel(packet)
 	default:
 		log.Printf("unkown cid %d\n", strconv.Itoa(int(packet.Cid)))
-		return []byte("unknown cid"), errors.New("unkown cid:" + strconv.Itoa(int(packet.Cid)))
+		return []byte("unknown cid"), errors.New("unknown cid:" + strconv.Itoa(int(packet.Cid)))
 	}
 }
 
@@ -113,6 +118,10 @@ func (bridgeChannel *BridgeChannel) handleNotify(packet *core.Packet) {
 	}
 }
 
+func (bridgeChannel *BridgeChannel) generateTunnelID() uint32 {
+	return atomic.AddUint32(&bridgeChannel.tunnelIDAtom, 1)
+}
+
 //handleOpenTunnel 开启端口映射
 func (bridgeChannel *BridgeChannel) handleOpenTunnel(packet *core.Packet) (data []byte, err error) {
 	openTunnelReq := &core.OpenTunnelReq{}
@@ -122,23 +131,33 @@ func (bridgeChannel *BridgeChannel) handleOpenTunnel(packet *core.Packet) (data 
 		return []byte("invalid request params"), e
 	}
 	log.Printf("open tunnel:%+v\n", openTunnelReq)
-	tunnel, openErr := NewTunnel(openTunnelReq.BindHost, openTunnelReq.BindPort,
-		openTunnelReq.LocalHost, openTunnelReq.LocalPort)
+
+	var tunnel Tunnel
+
+	if &openTunnelReq.TunnelType == nil {
+		return nil,errors.New("invalid tunnel type")
+	}
+	if openTunnelReq.TunnelType == core.TunnelTypeTcp {
+		tunnel = &TcpTunnel{TunnelProperty: TunnelProperty{host: openTunnelReq.BindHost, port: openTunnelReq.BindPort, localHost:openTunnelReq.LocalHost,
+			localPort:openTunnelReq.LocalPort}}
+	}
+	tunnel.SetTunnelID(bridgeChannel.generateTunnelID())
+	openErr := tunnel.Listen()
 	if openErr != nil {
 		log.Printf("open tunnel failed:%+v\n", openErr)
 		return []byte("open tunnel error"), openErr
 	}
-	tunnel.DataReceivedHandler = func(channel TunnelChannel, data []byte) {
-		bridgeChannel.ForwardDataToAgent(channel.ChannelID, tunnel.TunnelID, data)
-	}
-	tunnel.ClosedHandler = func() {
-		bridgeChannel.DeleteChannelTunnel(tunnel.TunnelID)
-	}
-	tunnel.TunnelChannelClosedHandler = func(channel TunnelChannel) {
-		bridgeChannel.NotifyTunnelChannelClosed(channel.ChannelID, tunnel.TunnelID)
-	}
-	bridgeChannel.AddTunnel(tunnel.TunnelID, tunnel)
-	return core.Uint32ToBytes(tunnel.TunnelID), nil
+	tunnel.SetDataReceivedHandler(func(channel TunnelConn, data []byte) {
+		bridgeChannel.ForwardDataToAgent(channel.GetChannelID(), tunnel.GetTunnelID(), data)
+	})
+	tunnel.SetClosedHandler(func() {
+		bridgeChannel.DeleteChannelTunnel(tunnel.GetTunnelID())
+	})
+	tunnel.SetTunnelChannelClosedHandler(func(channel TunnelConn) {
+		bridgeChannel.NotifyTunnelChannelClosed(channel.GetChannelID(), tunnel.GetTunnelID())
+	})
+	bridgeChannel.AddTunnel(tunnel.GetTunnelID(), &tunnel)
+	return core.Uint32ToBytes(tunnel.GetTunnelID()), nil
 }
 
 //handleAgentChannelClosed 客户端通道关闭
@@ -150,7 +169,7 @@ func (bridgeChannel *BridgeChannel) handleAgentChannelClosed(packet *core.Packet
 	channelID := core.BytesToUInt32(packet.Data[0:4])
 	tunnelID := core.BytesToUInt32(packet.Data[4:8])
 
-	tunnel := bridgeChannel.GetChannelTunnel(tunnelID)
+	tunnel := *bridgeChannel.GetChannelTunnel(tunnelID)
 	if tunnel != nil {
 		log.Printf("close tunnel channel:%d\n", channelID)
 		tunnel.CloseTunnelChannel(channelID)
@@ -164,7 +183,7 @@ func (bridgeChannel *BridgeChannel) handleForwardToTunnel(packet *core.Packet) {
 	channelID := core.BytesToUInt32(packet.Data[0:4])
 	tunnelID := core.BytesToUInt32(packet.Data[4:8])
 	data := packet.Data[8:]
-	tunnel := bridgeChannel.GetChannelTunnel(tunnelID)
+	tunnel := *bridgeChannel.GetChannelTunnel(tunnelID)
 	if tunnel == nil {
 		log.Printf("tunnel not found for ChannelID:%d, ignore to forward\n", channelID)
 		return

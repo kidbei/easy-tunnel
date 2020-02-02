@@ -7,38 +7,61 @@ import (
 	"strconv"
 )
 
-//Agent 客户端到目标端口链路
-type Agent struct {
-	conn                net.Conn
-	channelID           uint32
+type Agent interface {
+	Connect(host string, port int) error
+
+	ForwardToAgentChannel(data []byte)
+
+	Close()
+
+	GetRemoteAddrStr() string
+
+	SetDisconnectHandler(handler func())
+
+	SetDataReceivedHandler(handler func([]byte))
+}
+
+type AgentProperty struct {
+	ChannelID           uint32
 	LocalHost           string
 	LocalPort           int
 	TunnelChannelClosed bool
-	tunnelID            uint32
+	TunnelID            uint32
 	DisconnectHandler   func()
 	DataReceivedHandler func([]byte)
 }
 
-//NewAgent 新建本地连接
-func NewAgent(channelID uint32, host string, port int, tunnelID uint32) (*Agent, error) {
-	agent := &Agent{channelID: channelID, LocalHost: host, LocalPort: port, tunnelID: tunnelID,
-		TunnelChannelClosed: false}
+type TcpAgent struct {
+	AgentProperty
+	Conn net.Conn
+}
 
+func (agent *TcpAgent) Connect(host string, port int) error {
 	addr, err := net.ResolveTCPAddr("tcp", host+":"+strconv.Itoa(port))
 	conn, err := net.DialTCP("tcp", nil, addr)
 
 	if err != nil {
 		log.Println("connect failed", err)
-		return nil, err
+		return err
 	}
-	agent.conn = conn
 
+	agent.Conn = conn
 	go agent.handleConnection(conn)
 
-	return agent, nil
+	return nil
 }
 
-func (agent *Agent) handleConnection(conn net.Conn) {
+func (agent *TcpAgent) ForwardToAgentChannel(data []byte) {
+	agent.Conn.Write(data)
+}
+
+func (agent *TcpAgent) Close() {
+	log.Printf("close tcp agent connection:%s:%d\n", agent.LocalHost, agent.LocalPort)
+	agent.TunnelChannelClosed = true
+	agent.Conn.Close()
+}
+
+func (agent *TcpAgent) handleConnection(conn net.Conn) {
 
 	defer conn.Close()
 	defer agent.DisconnectHandler()
@@ -55,14 +78,14 @@ func (agent *Agent) handleConnection(conn net.Conn) {
 	}
 }
 
-//ForwardToAgentChannel 转发数据到本地端口
-func (agent *Agent) ForwardToAgentChannel(data []byte) {
-	agent.conn.Write(data)
+func (agent *AgentProperty) GetRemoteAddrStr() string {
+	return agent.LocalHost + strconv.Itoa(agent.LocalPort)
 }
 
-//CloseAgent 主动关闭客户端到目标的连接
-func (agent *Agent) CloseAgent() {
-	log.Printf("close agent, channelID:%d, address:%s\n", agent.channelID, agent.conn.RemoteAddr().String())
-	agent.TunnelChannelClosed = true
-	agent.conn.Close()
+func (agent *AgentProperty) SetDisconnectHandler(handler func()) {
+	agent.DisconnectHandler = handler
+}
+
+func (agent *AgentProperty) SetDataReceivedHandler(handler func([]byte)) {
+	agent.DataReceivedHandler = handler
 }
