@@ -50,6 +50,7 @@ func NewProtocolHandler(conn net.Conn) *ProtocolHandler {
 }
 
 func (protocolHandler *ProtocolHandler) ReadPacket(conn net.Conn) {
+	defer conn.Close()
 	for {
 		b, err := protocolHandler.frameConn.ReadFrame()
 		if err != nil {
@@ -57,6 +58,7 @@ func (protocolHandler *ProtocolHandler) ReadPacket(conn net.Conn) {
 			if protocolHandler.DisconnectHandler != nil {
 				protocolHandler.DisconnectHandler()
 			}
+			return
 		}
 		packet := &Packet{}
 		packet.Ver = BytesToUInt8(b[0:1])

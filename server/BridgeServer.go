@@ -13,17 +13,16 @@ import (
 
 //BridgeServer 连接客户端通道
 type BridgeServer struct {
-	Host     string
-	Port     int
+	Host string
+	Port int
 }
 
 //BridgeChannel 客户端连接
 type BridgeChannel struct {
-	conn                  net.Conn
-	channelIDTunnelMap    map[uint32]*Tunnel
-	channelIDTunnelLocker sync.Mutex
-	tunnels               map[uint32]*Tunnel
-	protocolHandler       *core.ProtocolHandler
+	conn                 net.Conn
+	tunnelIDTunnelMap    map[uint32]*Tunnel
+	tunnelIDTunnelLocker sync.Mutex
+	protocolHandler      *core.ProtocolHandler
 }
 
 //Start start bridge server
@@ -70,7 +69,7 @@ func (bridgeServer *BridgeServer) startKcpServer() {
 }
 
 func (bridgeServer *BridgeServer) handleBridgeConnection(conn net.Conn, protocolHandler *core.ProtocolHandler) {
-	channel := &BridgeChannel{channelIDTunnelMap: make(map[uint32]*Tunnel), tunnels: make(map[uint32]*Tunnel)}
+	channel := &BridgeChannel{tunnelIDTunnelMap: make(map[uint32]*Tunnel)}
 	channel.conn = conn
 	channel.protocolHandler = protocolHandler
 	channel.protocolHandler.RequestHandler = channel.handleRequest
@@ -81,12 +80,12 @@ func (bridgeServer *BridgeServer) handleBridgeConnection(conn net.Conn, protocol
 }
 
 func (bridgeChannel *BridgeChannel) disconnectHandler() {
-	bridgeChannel.channelIDTunnelLocker.Lock()
-	defer bridgeChannel.channelIDTunnelLocker.Unlock()
-	for _, tunnel := range bridgeChannel.tunnels {
+	bridgeChannel.tunnelIDTunnelLocker.Lock()
+	defer bridgeChannel.tunnelIDTunnelLocker.Unlock()
+	for _, tunnel := range bridgeChannel.tunnelIDTunnelMap {
 		tunnel.CloseTunnel()
 	}
-	bridgeChannel.tunnels = make(map[uint32]*Tunnel)
+	bridgeChannel.tunnelIDTunnelMap = make(map[uint32]*Tunnel)
 }
 
 //handleRequest 处理请求
@@ -124,13 +123,22 @@ func (bridgeChannel *BridgeChannel) handleOpenTunnel(packet *core.Packet) (data 
 	}
 	log.Printf("open tunnel:%+v\n", openTunnelReq)
 	tunnel, openErr := NewTunnel(openTunnelReq.BindHost, openTunnelReq.BindPort,
-		openTunnelReq.LocalHost, openTunnelReq.LocalPort, bridgeChannel)
+		openTunnelReq.LocalHost, openTunnelReq.LocalPort)
 	if openErr != nil {
 		log.Printf("open tunnel failed:%+v\n", openErr)
 		return []byte("open tunnel error"), openErr
 	}
-	bridgeChannel.tunnels[tunnel.TunnelID] = tunnel
-	return []byte("open success"), nil
+	tunnel.DataReceivedHandler = func(channel TunnelChannel, data []byte) {
+		bridgeChannel.ForwardDataToAgent(channel.ChannelID, tunnel.TunnelID, data)
+	}
+	tunnel.ClosedHandler = func() {
+		bridgeChannel.DeleteChannelTunnel(tunnel.TunnelID)
+	}
+	tunnel.TunnelChannelClosedHandler = func(channel TunnelChannel) {
+		bridgeChannel.NotifyTunnelChannelClosed(channel.ChannelID, tunnel.TunnelID)
+	}
+	bridgeChannel.AddTunnel(tunnel.TunnelID, tunnel)
+	return core.Uint32ToBytes(tunnel.TunnelID), nil
 }
 
 //handleAgentChannelClosed 客户端通道关闭
@@ -139,8 +147,10 @@ func (bridgeChannel *BridgeChannel) handleAgentChannelClosed(packet *core.Packet
 		log.Printf("invalid request, ChannelID is nil:%+v\n", packet)
 		return
 	}
-	channelID := core.BytesToUInt32(packet.Data)
-	tunnel := bridgeChannel.GetChannelTunnel(channelID)
+	channelID := core.BytesToUInt32(packet.Data[0:4])
+	tunnelID := core.BytesToUInt32(packet.Data[4:8])
+
+	tunnel := bridgeChannel.GetChannelTunnel(tunnelID)
 	if tunnel != nil {
 		log.Printf("close tunnel channel:%d\n", channelID)
 		tunnel.CloseTunnelChannel(channelID)
@@ -151,48 +161,45 @@ func (bridgeChannel *BridgeChannel) handleAgentChannelClosed(packet *core.Packet
 
 //handleForwardToTunnel 转发数据到映射通道
 func (bridgeChannel *BridgeChannel) handleForwardToTunnel(packet *core.Packet) {
-	channelIDBytes := packet.Data[0:4]
-	channelID := core.BytesToUInt32(channelIDBytes)
-	data := packet.Data[4:len(packet.Data)]
-	tunnel := bridgeChannel.GetChannelTunnel(channelID)
+	channelID := core.BytesToUInt32(packet.Data[0:4])
+	tunnelID := core.BytesToUInt32(packet.Data[4:8])
+	data := packet.Data[8:]
+	tunnel := bridgeChannel.GetChannelTunnel(tunnelID)
 	if tunnel == nil {
 		log.Printf("tunnel not found for ChannelID:%d, ignore to forward\n", channelID)
 		return
 	}
-	tunnel.ForwardToTunnel(channelID, data)
+	tunnel.ForwardToTunnelChannel(channelID, data)
 }
 
-//ForwardDataToLocal 转发数据到客户端本地
-func (bridgeChannel *BridgeChannel) ForwardDataToLocal(channelID uint32,
-	localHost string, localPort int, data []byte) {
-	channelIDBytes := core.Uint32ToBytes(channelID)
-	packetData := append(channelIDBytes, core.Int32ToBytes(int32(core.StringIPToInt(localHost)))...)
-	packetData = append(packetData, core.Uint32ToBytes(uint32(localPort))...)
-	packetData = append(packetData, data...)
+//ForwardDataToAgent 转发数据到客户端本地
+func (bridgeChannel *BridgeChannel) ForwardDataToAgent(channelID uint32, tunnelID uint32, data []byte) {
+	packetData := append(append(core.Uint32ToBytes(channelID), core.Uint32ToBytes(tunnelID)...), data...)
 	bridgeChannel.protocolHandler.Notify(core.CommandForwardToLocal, packetData)
 }
 
 //NotifyTunnelChannelClosed 映射连接上的连接主动关闭后触发
-func (bridgeChannel *BridgeChannel) NotifyTunnelChannelClosed(channelID uint32) {
-	log.Printf("notify tunnel channel closed to local agent, ChannelID:%d\n", channelID)
-	bridgeChannel.protocolHandler.Notify(core.CommandTunnelChannelClosed, core.Uint32ToBytes(channelID))
+func (bridgeChannel *BridgeChannel) NotifyTunnelChannelClosed(channelID uint32, tunnelID uint32) {
+	log.Printf("notify tunnel channel closed to local agent, ChannelID:%d, tunnelID:%d\n", channelID, tunnelID)
+	data := append(core.Uint32ToBytes(channelID), core.Uint32ToBytes(tunnelID)...)
+	bridgeChannel.protocolHandler.Notify(core.CommandTunnelChannelClosed, data)
 }
 
 //AddChannelTunnel x
-func (bridgeChannel *BridgeChannel) AddChannelTunnel(channelID uint32, tunnel *Tunnel) {
-	bridgeChannel.channelIDTunnelLocker.Lock()
-	defer bridgeChannel.channelIDTunnelLocker.Unlock()
-	bridgeChannel.channelIDTunnelMap[channelID] = tunnel
+func (bridgeChannel *BridgeChannel) AddTunnel(tunnelID uint32, tunnel *Tunnel) {
+	bridgeChannel.tunnelIDTunnelLocker.Lock()
+	defer bridgeChannel.tunnelIDTunnelLocker.Unlock()
+	bridgeChannel.tunnelIDTunnelMap[tunnelID] = tunnel
 }
 
 //DeleteChannelTunnel x
-func (bridgeChannel *BridgeChannel) DeleteChannelTunnel(channelID uint32) {
-	bridgeChannel.channelIDTunnelLocker.Lock()
-	defer bridgeChannel.channelIDTunnelLocker.Unlock()
-	delete(bridgeChannel.channelIDTunnelMap, channelID)
+func (bridgeChannel *BridgeChannel) DeleteChannelTunnel(tunnelID uint32) {
+	bridgeChannel.tunnelIDTunnelLocker.Lock()
+	defer bridgeChannel.tunnelIDTunnelLocker.Unlock()
+	delete(bridgeChannel.tunnelIDTunnelMap, tunnelID)
 }
 
 //GetChannelTunnel x
-func (bridgeChannel *BridgeChannel) GetChannelTunnel(channelID uint32) *Tunnel {
-	return bridgeChannel.channelIDTunnelMap[channelID]
+func (bridgeChannel *BridgeChannel) GetChannelTunnel(tunnelID uint32) *Tunnel {
+	return bridgeChannel.tunnelIDTunnelMap[tunnelID]
 }

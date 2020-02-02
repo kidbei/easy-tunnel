@@ -9,22 +9,24 @@ import (
 
 //Agent 客户端到目标端口链路
 type Agent struct {
-	conn      net.Conn
-	channelID uint32
-	localHost string
-	localPort int
+	conn                net.Conn
+	channelID           uint32
+	LocalHost           string
+	LocalPort           int
 	TunnelChannelClosed bool
-
-	bridgeClient *BridgeClient
+	tunnelID            uint32
+	DisconnectHandler   func()
+	DataReceivedHandler func([]byte)
 }
 
 //NewAgent 新建本地连接
-func NewAgent(channelID uint32, host string, port int, bridgeClient *BridgeClient) (*Agent, error) {
-	agent := &Agent{channelID: channelID, localHost: host, localPort: port, bridgeClient: bridgeClient, TunnelChannelClosed: false}
+func NewAgent(channelID uint32, host string, port int, tunnelID uint32) (*Agent, error) {
+	agent := &Agent{channelID: channelID, LocalHost: host, LocalPort: port, tunnelID: tunnelID,
+		TunnelChannelClosed: false}
 
 	addr, err := net.ResolveTCPAddr("tcp", host+":"+strconv.Itoa(port))
-
 	conn, err := net.DialTCP("tcp", nil, addr)
+
 	if err != nil {
 		log.Println("connect failed", err)
 		return nil, err
@@ -39,23 +41,17 @@ func NewAgent(channelID uint32, host string, port int, bridgeClient *BridgeClien
 func (agent *Agent) handleConnection(conn net.Conn) {
 
 	defer conn.Close()
-	defer func() {
-		if !agent.TunnelChannelClosed {
-			agent.bridgeClient.NotifyAgentChannelClosed(agent.channelID)
-		}
-	}()
-	defer agent.bridgeClient.DeleteAgentChannel(agent.channelID)
+	defer agent.DisconnectHandler()
 	buffer := make([]byte, core.MaxChannelDataSize)
 
 	for {
-
 		readLen, err := conn.Read(buffer)
 		if err != nil {
 			log.Println("read from client error", err)
 			break
 		}
 		data := buffer[:readLen]
-		agent.bridgeClient.ForwardToTunnel(agent.channelID, data)
+		agent.DataReceivedHandler(data)
 	}
 }
 

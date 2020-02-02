@@ -16,15 +16,21 @@ import (
 type BridgeClient struct {
 	tickerChan            chan bool
 	protocolHandler       *core.ProtocolHandler
-	agentChannelMap       map[uint32]*Agent
-	agentChannelMapLocker sync.Mutex
 	conn                  net.Conn
+	remoteTunnelMap       map[uint32]RemoteTunnel
+	remoteTunnelMapLocker sync.Mutex
 }
 
-func NewBridgeClient(protocol string) *BridgeClient {
-	client := &BridgeClient{}
+type RemoteTunnel struct {
+	TunnelId              uint32
+	LocalHost             string
+	LocalPort             int
+	agentChannelMap       map[uint32]*Agent
+	agentChannelMapLocker sync.Mutex
+}
 
-	client.agentChannelMap = make(map[uint32]*Agent)
+func NewBridgeClient() *BridgeClient {
+	client := &BridgeClient{remoteTunnelMap: make(map[uint32]RemoteTunnel)}
 
 	return client
 }
@@ -33,7 +39,7 @@ func NewBridgeClient(protocol string) *BridgeClient {
 func (bridgeClient *BridgeClient) Connect(host string, port int) (bool, error) {
 	var (
 		conn net.Conn
-		err error
+		err  error
 	)
 
 	conn, err = net.Dial("tcp", host+":"+strconv.Itoa(port))
@@ -96,34 +102,42 @@ func (bridgeClient *BridgeClient) Notify(cid uint8, data []byte) {
 	bridgeClient.protocolHandler.Notify(cid, data)
 }
 
-//ForwardToTunnel 转发数据到服务端
-func (bridgeClient *BridgeClient) ForwardToTunnel(channelID uint32, data []byte) {
-	packetData := append(core.Uint32ToBytes(channelID), data...)
+//ForwardToTunnelChannel 转发数据到服务端
+func (bridgeClient *BridgeClient) ForwardToTunnel(channelID uint32, tunnelID uint32, data []byte) {
+	packetData := append(append(core.Uint32ToBytes(channelID), core.Uint32ToBytes(tunnelID)...), data...)
 	bridgeClient.protocolHandler.Notify(core.CommandForwardToTunnel, packetData)
 }
 
 //NotifyAgentChannelClosed x
-func (bridgeClient *BridgeClient) NotifyAgentChannelClosed(channelID uint32) {
-	log.Printf("notify agent channel closed event for channelID:%d\n", channelID)
-	bridgeClient.protocolHandler.Notify(core.CommandAgentChannelClosed, core.Uint32ToBytes(channelID))
+func (bridgeClient *BridgeClient) NotifyAgentChannelClosed(channelID uint32, tunnelID uint32) {
+	log.Printf("notify agent channel closed event for channelID:%d, tunnelID:%d\n", channelID, tunnelID)
+	data := append(core.Uint32ToBytes(channelID), core.Uint32ToBytes(tunnelID)...)
+	bridgeClient.protocolHandler.Notify(core.CommandAgentChannelClosed, data)
 }
 
 //OpenTunnel 开启端口映射
 func (bridgeClient *BridgeClient) OpenTunnel(remoteBindHost string, remoteBindPort int,
-	localHost string, localPort int) (msg string, err error) {
+	localHost string, localPort int) (tunnel *RemoteTunnel, err error) {
 
 	openTunnelReq := core.OpenTunnelReq{BindHost: remoteBindHost, BindPort: remoteBindPort,
 		LocalHost: localHost, LocalPort: localPort}
 	bytes, _ := json.Marshal(openTunnelReq)
 	packet, e := bridgeClient.Send(core.CommandOpenTunnel, bytes)
 	if e != nil {
-		return "send open tunnel request error", e
+		return nil, e
 	}
 	if packet.Success == 0 {
-		return string(packet.Data), errors.New(string(packet.Data))
+		return nil, errors.New(string(packet.Data))
 	}
 	log.Printf("open tunnel success%s\n", string(bytes))
-	return "ok", nil
+
+	tunnelID := core.BytesToUInt32(packet.Data)
+	remoteTunnel := RemoteTunnel{TunnelId: tunnelID, LocalHost: localHost, LocalPort: localPort}
+	remoteTunnel.agentChannelMap = make(map[uint32]*Agent)
+
+	bridgeClient.addRemoteTunnel(tunnelID, remoteTunnel)
+
+	return &remoteTunnel, nil
 }
 
 func (bridgeClient *BridgeClient) handleRequest(packet *core.Packet) (data []byte, err error) {
@@ -146,60 +160,97 @@ func (bridgeClient *BridgeClient) handleNotify(packet *core.Packet) {
 
 func (bridgeClient *BridgeClient) handleForwardToAgentChannel(packet *core.Packet) {
 	channelID := core.BytesToUInt32(packet.Data[0:4])
-	localHost := core.IPIntToString(core.BytesToInt32(packet.Data[4:8]))
-	localPort := int(core.BytesToUInt32(packet.Data[8:12]))
-	data := packet.Data[12:len(packet.Data)]
+	tunnelID := core.BytesToUInt32(packet.Data[4:8])
+	data := packet.Data[8:]
 
-	agent := bridgeClient.GetAgentChannel(channelID)
+	tunnel := bridgeClient.getRemoteTunnel(tunnelID)
+	if tunnel == nil {
+		log.Printf("tunnel not found:%d\n", tunnelID)
+		return
+	}
+
+	agent := tunnel.GetAgentChannel(channelID)
 	if agent == nil {
 		log.Printf("agent not found for channelID:%d\n", channelID)
-		a, err := NewAgent(channelID, localHost, localPort, bridgeClient)
+		a, err := NewAgent(channelID, tunnel.LocalHost, tunnel.LocalPort, tunnelID)
 		if err != nil {
-			log.Printf("connect to local failed, %s:%d, %+v\n", localHost, localPort, err)
-			bridgeClient.NotifyAgentChannelClosed(channelID)
+			log.Printf("connect to local failed, %s:%d, %+v\n", agent.LocalHost, agent.LocalPort, err)
+			bridgeClient.NotifyAgentChannelClosed(channelID, tunnelID)
 			return
 		}
-		log.Printf("new agent connection:%s:%d\n", localHost, localPort)
 		agent = a
-		bridgeClient.AddAgentChannel(channelID, agent)
+		log.Printf("new agent connection:%s:%d\n", agent.LocalHost, agent.LocalPort)
+		agent.DisconnectHandler = func() {
+			bridgeClient.NotifyAgentChannelClosed(channelID, tunnelID)
+			tunnel.DeleteAgentChannel(channelID)
+		}
+		agent.DataReceivedHandler = func(bytes []byte) {
+			bridgeClient.ForwardToTunnel(channelID, tunnelID, bytes)
+		}
+		tunnel.AddAgentChannel(channelID, agent)
 	}
 	agent.ForwardToAgentChannel(data)
 }
 
 func (bridgeClient *BridgeClient) handleTunnelChannelClosed(packet *core.Packet) {
-	channelID := core.BytesToUInt32(packet.Data)
-	agent := bridgeClient.GetAgentChannel(channelID)
+	channelID := core.BytesToUInt32(packet.Data[0:4])
+	tunnelID := core.BytesToUInt32(packet.Data[4:8])
+
+	tunnel := bridgeClient.getRemoteTunnel(tunnelID)
+
+	if tunnel == nil {
+		log.Printf("tunnel not found:%d\n", tunnelID)
+		return
+	}
+	agent := tunnel.GetAgentChannel(channelID)
 	if agent != nil {
-		log.Printf("close agent channel:%d\n", channelID)
+		log.Printf("close agent channel:%d, tunnelID:%d\n", channelID, tunnelID)
+		defer tunnel.DeleteAgentChannel(channelID)
 		agent.CloseAgent()
 	}
 }
 
 //AddAgentChannel x
-func (bridgeClient *BridgeClient) AddAgentChannel(channelID uint32, agent *Agent) {
-	bridgeClient.agentChannelMapLocker.Lock()
-	defer bridgeClient.agentChannelMapLocker.Unlock()
-	bridgeClient.agentChannelMap[channelID] = agent
+func (tunnel *RemoteTunnel) AddAgentChannel(channelID uint32, agent *Agent) {
+	tunnel.agentChannelMapLocker.Lock()
+	defer tunnel.agentChannelMapLocker.Unlock()
+	tunnel.agentChannelMap[channelID] = agent
 }
 
 //DeleteAgentChannel x
-func (bridgeClient *BridgeClient) DeleteAgentChannel(channelID uint32) {
-	bridgeClient.agentChannelMapLocker.Lock()
-	defer bridgeClient.agentChannelMapLocker.Unlock()
-	delete(bridgeClient.agentChannelMap, channelID)
+func (tunnel *RemoteTunnel) DeleteAgentChannel(channelID uint32) {
+	tunnel.agentChannelMapLocker.Lock()
+	defer tunnel.agentChannelMapLocker.Unlock()
+	delete(tunnel.agentChannelMap, channelID)
 }
 
 //GetAgentChannel x
-func (bridgeClient *BridgeClient) GetAgentChannel(channelID uint32) *Agent {
-	return bridgeClient.agentChannelMap[channelID]
+func (tunnel *RemoteTunnel) GetAgentChannel(channelID uint32) *Agent {
+	return tunnel.agentChannelMap[channelID]
+}
+
+func (bridgeClient *BridgeClient) addRemoteTunnel(tunnelID uint32, tunnel RemoteTunnel) {
+	bridgeClient.remoteTunnelMapLocker.Lock()
+	defer bridgeClient.remoteTunnelMapLocker.Unlock()
+	bridgeClient.remoteTunnelMap[tunnelID] = tunnel
+}
+
+func (bridgeClient *BridgeClient) getRemoteTunnel(tunnelID uint32) *RemoteTunnel {
+	if tunnel, exist := bridgeClient.remoteTunnelMap[tunnelID]; exist {
+		return &tunnel
+	}
+	return nil
 }
 
 func (bridgeClient *BridgeClient) handleDisconnect() {
 	bridgeClient.stopPing()
-	bridgeClient.agentChannelMapLocker.Lock()
-	defer bridgeClient.agentChannelMapLocker.Unlock()
-	for _, agent := range bridgeClient.agentChannelMap {
-		agent.CloseAgent()
+
+	for _, tunnel := range bridgeClient.remoteTunnelMap {
+		for _, agent := range tunnel.agentChannelMap {
+			agent.CloseAgent()
+			tunnel.DeleteAgentChannel(agent.channelID)
+		}
 	}
+
 	os.Exit(2)
 }
