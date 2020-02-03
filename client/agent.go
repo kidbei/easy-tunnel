@@ -19,6 +19,8 @@ type Agent interface {
 	SetDisconnectHandler(handler func())
 
 	SetDataReceivedHandler(handler func([]byte))
+
+	IsTunnelChannelClosed() bool
 }
 
 type AgentProperty struct {
@@ -62,11 +64,14 @@ func (agent *TcpAgent) Close() {
 }
 
 func (agent *TcpAgent) handleConnection(conn net.Conn) {
-
-	defer conn.Close()
-	defer agent.DisconnectHandler()
+	defer func() {
+		if agent.DisconnectHandler == nil{
+			log.Printf("disconnect is not set")
+		} else {
+			agent.DisconnectHandler()
+		}
+	}()
 	buffer := make([]byte, core.MaxChannelDataSize)
-
 	for {
 		readLen, err := conn.Read(buffer)
 		if err != nil {
@@ -88,4 +93,8 @@ func (agent *AgentProperty) SetDisconnectHandler(handler func()) {
 
 func (agent *AgentProperty) SetDataReceivedHandler(handler func([]byte)) {
 	agent.DataReceivedHandler = handler
+}
+
+func (agent *AgentProperty) IsTunnelChannelClosed() bool {
+	return agent.TunnelChannelClosed
 }

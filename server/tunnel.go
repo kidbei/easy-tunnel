@@ -15,15 +15,9 @@ type Tunnel interface {
 
 	SetDataReceivedHandler(handler func(channel TunnelConn, data []byte))
 
-	GetDataReceivedHandler()func(channel TunnelConn, data []byte)
-
 	SetClosedHandler(handler func())
 
-	GetClosedHandler() func()
-
 	SetTunnelChannelClosedHandler(handler func(channel TunnelConn))
-
-	GetTunnelChannelClosedHandler() func(channel TunnelConn)
 
 	GetTunnelID() uint32
 
@@ -100,25 +94,14 @@ func (tunnel *TunnelProperty) SetDataReceivedHandler(handler func(channel Tunnel
 	tunnel.DataReceivedHandler = handler
 }
 
-func (tunnel *TunnelProperty) GetDataReceivedHandler() func(channel TunnelConn, data []byte) {
-	return tunnel.DataReceivedHandler
-}
-
 func (tunnel *TunnelProperty) SetClosedHandler(handler func()) {
 	tunnel.ClosedHandler = handler
-}
-
-func (tunnel *TunnelProperty) GetClosedHandler() func() {
-	return tunnel.ClosedHandler
 }
 
 func (tunnel *TunnelProperty) SetTunnelChannelClosedHandler(handler func(channel TunnelConn)) {
 	tunnel.TunnelChannelClosedHandler = handler
 }
 
-func (tunnel *TunnelProperty) GetTunnelChannelClosedHandler() func(channel TunnelConn) {
-	return tunnel.TunnelChannelClosedHandler
-}
 
 func (tunnel *TunnelProperty) GenerateChannelID() uint32 {
 	return atomic.AddUint32(&tunnel.channelIDAtom, 1)
@@ -257,7 +240,7 @@ func (tunnel *TcpTunnel) handleConnection(conn net.Conn) {
 
 	defer conn.Close()
 	defer tunnel.DeleteTunnelChannel(channelID)
-	defer tunnel.GetTunnelChannelClosedHandler()(tunnelChannel)
+	defer tunnel.TunnelChannelClosedHandler(tunnelChannel)
 	for {
 		buffer := make([]byte, 1024)
 
@@ -267,10 +250,10 @@ func (tunnel *TcpTunnel) handleConnection(conn net.Conn) {
 			break
 		}
 		data := buffer[0:readLen]
-		tunnel.GetDataReceivedHandler()(tunnelChannel, data)
+		tunnel.DataReceivedHandler(tunnelChannel, data)
 	}
 	if !tunnelChannel.AgentClosed {
-		tunnel.GetTunnelChannelClosedHandler()(tunnelChannel)
+		tunnel.TunnelChannelClosedHandler(tunnelChannel)
 	}
 }
 

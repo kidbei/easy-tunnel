@@ -60,6 +60,9 @@ func (protocolHandler *ProtocolHandler) ReadPacket(conn net.Conn) {
 			}
 			return
 		}
+		if len(b) == 0 {
+			continue
+		}
 		packet := &Packet{}
 		packet.Ver = BytesToUInt8(b[0:1])
 		packet.Flag = BytesToUInt8(b[1:2])
