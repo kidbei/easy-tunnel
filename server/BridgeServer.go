@@ -195,6 +195,7 @@ func (bridgeChannel *BridgeChannel) handleForwardToTunnel(packet *core.Packet) {
 //ForwardDataToAgent 转发数据到客户端本地
 func (bridgeChannel *BridgeChannel) ForwardDataToAgent(channelID uint32, tunnelID uint32, data []byte) {
 	packetData := append(append(core.Uint32ToBytes(channelID), core.Uint32ToBytes(tunnelID)...), data...)
+	log.Printf("forward to agent, channelID:%d, tunnelID:%d, data length:%d\n", channelID, tunnelID, len(data))
 	bridgeChannel.protocolHandler.Notify(core.CommandForwardToLocal, packetData)
 }
 

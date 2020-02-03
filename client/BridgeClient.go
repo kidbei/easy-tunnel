@@ -107,6 +107,7 @@ func (bridgeClient *BridgeClient) Notify(cid uint8, data []byte) {
 //ForwardToTunnelChannel 转发数据到服务端
 func (bridgeClient *BridgeClient) ForwardToTunnel(channelID uint32, tunnelID uint32, data []byte) {
 	packetData := append(append(core.Uint32ToBytes(channelID), core.Uint32ToBytes(tunnelID)...), data...)
+	log.Printf("forward to tunnel channel, channelID:%d, tunnelID:%d, data length:%d\n", channelID, tunnelID, len(data))
 	bridgeClient.protocolHandler.Notify(core.CommandForwardToTunnel, packetData)
 }
 
