@@ -50,9 +50,15 @@ func main() {
 		panic(msg)
 	}
 
-	c := make(chan os.Signal)
-	signal.Notify(c)
-	s := <-c
-	log.Println("exit", s)
-	bridgeClient.Close()
+	signalChan := make(chan os.Signal, 1)
+	cleanupDone := make(chan bool)
+	signal.Notify(signalChan, os.Interrupt)
+	go func() {
+		for _ = range signalChan {
+			log.Println("exit bridge server")
+			bridgeClient.Close()
+			cleanupDone <- true
+		}
+	}()
+	<-cleanupDone
 }

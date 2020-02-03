@@ -144,9 +144,10 @@ func (tunnel *TunnelProperty) CloseTunnel() {
 func (tunnel *TunnelProperty) ForwardToTunnelChannel(channelID uint32, data []byte) {
 	tunnelChannel := tunnel.GetTunnelChannel(channelID)
 	if tunnelChannel == nil {
-		log.Printf("tunnel channel is not found for ChannelID:%d\n", channelID)
+		log.Printf("forward error, tunnel channel is not found for ChannelID:%d\n", channelID)
 		return
 	}
+	log.Printf("forward to tunnel, channelID:%d, tunnelID:%d, data length:%d\n",channelID, tunnel.TunnelID, len(data))
 	tunnelChannel.Write(data)
 }
 

@@ -30,17 +30,17 @@ func NewProtocolHandler(conn net.Conn) *ProtocolHandler {
 
 	protocolHandler.encodeConfig = goframe.EncoderConfig{
 		ByteOrder:                       binary.BigEndian,
-		LengthFieldLength:               4,
+		LengthFieldLength:               2,
 		LengthAdjustment:                0,
 		LengthIncludesLengthFieldLength: false,
 	}
 
 	protocolHandler.decodeConfig = goframe.DecoderConfig{
 		ByteOrder:           binary.BigEndian,
-		LengthFieldLength:   4,
+		LengthFieldLength:   2,
 		LengthFieldOffset:   0,
 		LengthAdjustment:    0,
-		InitialBytesToStrip: 4,
+		InitialBytesToStrip: 2,
 	}
 
 	protocolHandler.frameConn =
@@ -50,7 +50,6 @@ func NewProtocolHandler(conn net.Conn) *ProtocolHandler {
 }
 
 func (protocolHandler *ProtocolHandler) ReadPacket(conn net.Conn) {
-	defer conn.Close()
 	for {
 		b, err := protocolHandler.frameConn.ReadFrame()
 		if err != nil {
@@ -61,6 +60,7 @@ func (protocolHandler *ProtocolHandler) ReadPacket(conn net.Conn) {
 			return
 		}
 		if len(b) == 0 {
+			log.Printf("got empty data from socket %s\n", conn.RemoteAddr().String())
 			continue
 		}
 		packet := &Packet{}
@@ -113,7 +113,7 @@ func (protocolHandler *ProtocolHandler) Send(cid uint8, data []byte) (*Packet, e
 	ver := CurrentVersion
 	flag := RequestFlag
 	reqID := protocolHandler.generateID()
-	sendPacket := &Packet{ Ver: ver, Flag: flag, Req: reqID, Cid: cid, Data: data, Wg: &wg, ReqTime: time.Now().Unix()}
+	sendPacket := &Packet{Ver: ver, Flag: flag, Req: reqID, Cid: cid, Data: data, Wg: &wg, ReqTime: time.Now().Unix()}
 	packetData := PacketToBytes(sendPacket)
 	protocolHandler.PendingMap[reqID] = sendPacket
 	wg.Add(1)
@@ -122,7 +122,7 @@ func (protocolHandler *ProtocolHandler) Send(cid uint8, data []byte) (*Packet, e
 	return sendPacket, nil
 }
 
-//Notify 发送请求，不需要返回
+//Notify noti发送请求，不需要返回
 func (protocolHandler *ProtocolHandler) Notify(cid uint8, data []byte) {
 	ver := CurrentVersion
 	flag := NotifyFlag

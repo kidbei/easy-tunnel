@@ -6,6 +6,7 @@ import (
 	"github.com/kidbei/easy-tunnel/core"
 	"log"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -280,6 +281,6 @@ func (bridgeClient *BridgeClient) handleDisconnect() {
 	}
 
 	if bridgeClient.ExitOnDisconnect {
-
+		os.Exit(1)
 	}
 }

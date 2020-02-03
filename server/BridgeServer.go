@@ -61,9 +61,8 @@ func (bridgeServer *BridgeServer) startTcpServer() {
 		if err != nil {
 			log.Println("tunnel connection disconnect", err)
 			break
-		} else {
-			go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(conn))
 		}
+		go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(conn))
 	}
 }
 
@@ -98,7 +97,7 @@ func (bridgeChannel *BridgeChannel) handleRequest(packet *core.Packet) (data []b
 	case core.CommandOpenTunnel:
 		return bridgeChannel.handleOpenTunnel(packet)
 	default:
-		log.Printf("unkown cid %d\n", strconv.Itoa(int(packet.Cid)))
+		log.Printf("unkown cid %d\n", packet.Cid)
 		return []byte("unknown cid"), errors.New("unknown cid:" + strconv.Itoa(int(packet.Cid)))
 	}
 }
@@ -129,7 +128,7 @@ func (bridgeChannel *BridgeChannel) handleOpenTunnel(packet *core.Packet) (data 
 		log.Printf("invalid request params:%s,error:%+v\n", string(packet.Data), e)
 		return []byte("invalid request params"), e
 	}
-	log.Printf("open tunnel:%+v\n", openTunnelReq)
+	log.Printf("open tunnel:%s\n", string(packet.Data))
 
 	var tunnel Tunnel
 
@@ -139,6 +138,9 @@ func (bridgeChannel *BridgeChannel) handleOpenTunnel(packet *core.Packet) (data 
 	if openTunnelReq.TunnelType == core.TunnelTypeTcp {
 		tunnel = &TcpTunnel{TunnelProperty: TunnelProperty{host: openTunnelReq.BindHost, port: openTunnelReq.BindPort, localHost: openTunnelReq.LocalHost,
 			localPort: openTunnelReq.LocalPort}}
+	} else {
+		log.Printf("unknown tunnel type:%s\n", openTunnelReq.TunnelType)
+		return nil, errors.New("invalid tunnel type")
 	}
 	tunnel.SetTunnelID(bridgeChannel.generateTunnelID())
 	openErr := tunnel.Listen()
@@ -170,7 +172,7 @@ func (bridgeChannel *BridgeChannel) handleAgentChannelClosed(packet *core.Packet
 
 	tunnel := *bridgeChannel.GetChannelTunnel(tunnelID)
 	if tunnel != nil {
-		log.Printf("close tunnel channel:%d\n", channelID)
+		log.Printf("handle agent channel closed event:%d\n", channelID)
 		tunnel.CloseTunnelChannel(channelID)
 	} else {
 		log.Printf("tunnel is not found for channel:%d\n", channelID)

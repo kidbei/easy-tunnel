@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	host     *string
-	port     *int
+	host *string
+	port *int
 )
 
 func init() {
@@ -20,7 +20,6 @@ func init() {
 	log.SetFlags(log.Ldate | log.Lmicroseconds | log.Lshortfile)
 }
 
-
 func main() {
 
 	flag.Parse()
@@ -28,9 +27,15 @@ func main() {
 	bridgeServer := &BridgeServer{Host: *host, Port: *port}
 	bridgeServer.Start()
 
-	c := make(chan os.Signal)
-	signal.Notify(c)
-	s := <-c
-	log.Println("exit", s)
-	bridgeServer.Close()
+	signalChan := make(chan os.Signal, 1)
+	cleanupDone := make(chan bool)
+	signal.Notify(signalChan, os.Interrupt)
+	go func() {
+		for _ = range signalChan {
+			log.Println("exit bridge server")
+			bridgeServer.Close()
+			cleanupDone <- true
+		}
+	}()
+	<-cleanupDone
 }
