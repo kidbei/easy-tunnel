@@ -126,6 +126,7 @@ func (protocolHandler *ProtocolHandler) Notify(cid uint8, data []byte) {
 	reqID := protocolHandler.generateID()
 	packet := &Packet{Ver: ver, Flag: flag, Req: reqID, Cid: cid, Data: data, ReqTime: time.Now().Unix()}
 	packetData := PacketToBytes(packet)
+	log.Printf("notify,data length:%d, reqId:%d\n", len(data), reqID)
 	protocolHandler.frameConn.WriteFrame(packetData)
 }
 
