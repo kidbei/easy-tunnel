@@ -59,7 +59,8 @@ func (bridgeServer *BridgeServer) startTcpServer() {
 	for {
 		conn, err := server.Accept()
 		if err != nil {
-			log.Println("accept error", err)
+			log.Println("tunnel connection disconnect", err)
+			break
 		} else {
 			go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(conn))
 		}
