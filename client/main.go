@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"time"
 )
 
 var (
@@ -50,8 +49,6 @@ func main() {
 	if e != nil {
 		panic(msg)
 	}
-
-	time.Sleep(time.Hour * 1)
 
 	c := make(chan os.Signal)
 	signal.Notify(c)

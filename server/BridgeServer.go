@@ -16,6 +16,7 @@ import (
 type BridgeServer struct {
 	Host string
 	Port int
+	channels []*BridgeChannel
 }
 
 //BridgeChannel 客户端连接
@@ -28,10 +29,17 @@ type BridgeChannel struct {
 }
 
 //Start start bridge server
-func (bridgeServer BridgeServer) Start() {
-	bridgeServer.startTcpServer()
+func (bridgeServer *BridgeServer) Start() {
+	go bridgeServer.startTcpServer()
 }
 
+
+func (bridgeServer *BridgeServer) Close() {
+	for idx,_ := range bridgeServer.channels {
+		bridgeChannel := bridgeServer.channels[idx]
+		bridgeChannel.Close()
+	}
+}
 
 
 func (bridgeServer *BridgeServer) startTcpServer() {
@@ -84,6 +92,10 @@ func (bridgeServer *BridgeServer) handleBridgeConnection(conn net.Conn, protocol
 }
 
 func (bridgeChannel *BridgeChannel) disconnectHandler() {
+	bridgeChannel.Close()
+}
+
+func (bridgeChannel *BridgeChannel) Close() {
 	bridgeChannel.tunnelIDTunnelLocker.Lock()
 	defer bridgeChannel.tunnelIDTunnelLocker.Unlock()
 	for tunnelID, _ := range bridgeChannel.tunnelIDTunnelMap {

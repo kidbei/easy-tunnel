@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
+	"os/signal"
 )
 
 var (
@@ -18,27 +20,17 @@ func init() {
 	log.SetFlags(log.Ldate | log.Lmicroseconds | log.Lshortfile)
 }
 
-type Parent struct {
-}
-func (p *Parent) Test() {
-	log.Println("parent method")
-}
-
-type Child struct {
-	Parent
-}
-
-func (c *Child) Test(){
-	log.Println("child method")
-}
-
-
-
 
 func main() {
 
 	flag.Parse()
 
-	bridgeServer := &BridgeServer{*host, *port}
+	bridgeServer := &BridgeServer{Host: *host, Port: *port}
 	bridgeServer.Start()
+
+	c := make(chan os.Signal)
+	signal.Notify(c)
+	s := <-c
+	log.Println("exit", s)
+	bridgeServer.Close()
 }
