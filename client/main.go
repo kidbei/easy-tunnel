@@ -34,10 +34,10 @@ func main() {
 	flag.Parse()
 
 	if *localPort == -1 {
-		panic("fport参数必填")
+		panic("fp参数必填")
 	}
 	if *remoteBindPort == -1 {
-		panic("bport参数必填")
+		panic("bp参数必填")
 	}
 
 	bridgeClient := NewBridgeClient()

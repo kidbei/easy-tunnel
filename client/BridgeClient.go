@@ -6,7 +6,6 @@ import (
 	"github.com/kidbei/easy-tunnel/core"
 	"log"
 	"net"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -14,20 +13,21 @@ import (
 
 //BridgeClient 客户端
 type BridgeClient struct {
-	tickerChan      chan bool
-	protocolHandler *core.ProtocolHandler
-	conn            net.Conn
-	remoteTunnelMap map[uint32]RemoteTunnel
-	locker          sync.Mutex
+	tickerChan       chan bool
+	protocolHandler  *core.ProtocolHandler
+	conn             net.Conn
+	remoteTunnelMap  map[uint32]RemoteTunnel
+	locker           sync.Mutex
+	ExitOnDisconnect bool
 }
 
 type RemoteTunnel struct {
-	TunnelId              uint32
-	LocalHost             string
-	LocalPort             int
-	agentChannelMap       map[uint32]*Agent
-	agentChannelMapLocker sync.Mutex
-	TunnelType            string
+	TunnelId        uint32
+	LocalHost       string
+	LocalPort       int
+	agentChannelMap map[uint32]*Agent
+	locker          sync.Mutex
+	TunnelType      string
 }
 
 func NewBridgeClient() *BridgeClient {
@@ -178,7 +178,7 @@ func (bridgeClient *BridgeClient) handleForwardToAgentChannel(packet *core.Packe
 
 		agent = tunnel.GetAgentChannel(channelID)
 
-		if agent == nil  {
+		if agent == nil {
 			log.Printf("agent not found for channelID:%d\n", channelID)
 
 			if tunnel.TunnelType == core.TunnelTypeTcp {
@@ -233,15 +233,15 @@ func (bridgeClient *BridgeClient) handleTunnelChannelClosed(packet *core.Packet)
 
 //AddAgentChannel x
 func (tunnel *RemoteTunnel) AddAgentChannel(channelID uint32, agent *Agent) {
-	tunnel.agentChannelMapLocker.Lock()
-	defer tunnel.agentChannelMapLocker.Unlock()
+	tunnel.locker.Lock()
+	defer tunnel.locker.Unlock()
 	tunnel.agentChannelMap[channelID] = agent
 }
 
 //DeleteAgentChannel x
 func (tunnel *RemoteTunnel) DeleteAgentChannel(channelID uint32) {
-	tunnel.agentChannelMapLocker.Lock()
-	defer tunnel.agentChannelMapLocker.Unlock()
+	tunnel.locker.Lock()
+	defer tunnel.locker.Unlock()
 	delete(tunnel.agentChannelMap, channelID)
 }
 
@@ -269,6 +269,8 @@ func (bridgeClient *BridgeClient) getRemoteTunnel(tunnelID uint32) *RemoteTunnel
 func (bridgeClient *BridgeClient) handleDisconnect() {
 	bridgeClient.stopPing()
 
+	bridgeClient.Close()
+
 	for _, tunnel := range bridgeClient.remoteTunnelMap {
 		for channelID, _ := range tunnel.agentChannelMap {
 			agent := *tunnel.agentChannelMap[channelID]
@@ -277,5 +279,7 @@ func (bridgeClient *BridgeClient) handleDisconnect() {
 		}
 	}
 
-	os.Exit(2)
+	if bridgeClient.ExitOnDisconnect {
+
+	}
 }
