@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/kidbei/easy-tunnel/core"
-	"github.com/xtaci/kcp-go"
 	"log"
 	"net"
 	"strconv"
@@ -14,18 +13,20 @@ import (
 
 //BridgeServer 连接客户端通道
 type BridgeServer struct {
-	Host string
-	Port int
+	Host     string
+	Port     int
 	channels []*BridgeChannel
+	l        net.Listener
+	locker   sync.Mutex
 }
 
 //BridgeChannel 客户端连接
 type BridgeChannel struct {
-	conn                 net.Conn
-	tunnelIDTunnelMap    map[uint32]*Tunnel
-	tunnelIDTunnelLocker sync.Mutex
-	protocolHandler      *core.ProtocolHandler
-	tunnelIDAtom 		uint32
+	conn              net.Conn
+	tunnelIDTunnelMap map[uint32]*Tunnel
+	locker            sync.Mutex
+	protocolHandler   *core.ProtocolHandler
+	tunnelIDAtom      uint32
 }
 
 //Start start bridge server
@@ -33,14 +34,17 @@ func (bridgeServer *BridgeServer) Start() {
 	go bridgeServer.startTcpServer()
 }
 
-
 func (bridgeServer *BridgeServer) Close() {
-	for idx,_ := range bridgeServer.channels {
+	bridgeServer.locker.Lock()
+	defer bridgeServer.locker.Unlock()
+
+	for idx, _ := range bridgeServer.channels {
 		bridgeChannel := bridgeServer.channels[idx]
 		bridgeChannel.Close()
 	}
-}
 
+	bridgeServer.l.Close()
+}
 
 func (bridgeServer *BridgeServer) startTcpServer() {
 	server, e := net.Listen("tcp", bridgeServer.Host+":"+strconv.Itoa(bridgeServer.Port))
@@ -49,31 +53,12 @@ func (bridgeServer *BridgeServer) startTcpServer() {
 	}
 
 	log.Printf("start bridge server success at %s:%d\n", bridgeServer.Host, bridgeServer.Port)
+	bridgeServer.l = server
 
-	defer server.Close()
 	for {
 		conn, err := server.Accept()
 		if err != nil {
 			log.Println("accept error", err)
-		} else {
-			go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(conn))
-		}
-	}
-}
-
-func (bridgeServer *BridgeServer) startKcpServer() {
-	listen, err := kcp.Listen(bridgeServer.Host + ":" + strconv.Itoa(bridgeServer.Port))
-	if err != nil {
-		log.Panicln("failed to start kcp server", err)
-	}
-	log.Printf("start kcp server at %s:%d\n", bridgeServer.Host, bridgeServer.Port)
-
-	defer listen.Close()
-
-	for {
-		conn, e := listen.Accept()
-		if e != nil {
-			log.Println("accept error", e)
 		} else {
 			go bridgeServer.handleBridgeConnection(conn, core.NewProtocolHandler(conn))
 		}
@@ -96,8 +81,8 @@ func (bridgeChannel *BridgeChannel) disconnectHandler() {
 }
 
 func (bridgeChannel *BridgeChannel) Close() {
-	bridgeChannel.tunnelIDTunnelLocker.Lock()
-	defer bridgeChannel.tunnelIDTunnelLocker.Unlock()
+	bridgeChannel.locker.Lock()
+	defer bridgeChannel.locker.Unlock()
 	for tunnelID, _ := range bridgeChannel.tunnelIDTunnelMap {
 		tunnel := *bridgeChannel.GetChannelTunnel(tunnelID)
 		tunnel.Close()
@@ -147,11 +132,11 @@ func (bridgeChannel *BridgeChannel) handleOpenTunnel(packet *core.Packet) (data 
 	var tunnel Tunnel
 
 	if &openTunnelReq.TunnelType == nil {
-		return nil,errors.New("invalid tunnel type")
+		return nil, errors.New("invalid tunnel type")
 	}
 	if openTunnelReq.TunnelType == core.TunnelTypeTcp {
-		tunnel = &TcpTunnel{TunnelProperty: TunnelProperty{host: openTunnelReq.BindHost, port: openTunnelReq.BindPort, localHost:openTunnelReq.LocalHost,
-			localPort:openTunnelReq.LocalPort}}
+		tunnel = &TcpTunnel{TunnelProperty: TunnelProperty{host: openTunnelReq.BindHost, port: openTunnelReq.BindPort, localHost: openTunnelReq.LocalHost,
+			localPort: openTunnelReq.LocalPort}}
 	}
 	tunnel.SetTunnelID(bridgeChannel.generateTunnelID())
 	openErr := tunnel.Listen()
@@ -218,15 +203,15 @@ func (bridgeChannel *BridgeChannel) NotifyTunnelChannelClosed(channelID uint32, 
 
 //AddChannelTunnel x
 func (bridgeChannel *BridgeChannel) AddTunnel(tunnelID uint32, tunnel *Tunnel) {
-	bridgeChannel.tunnelIDTunnelLocker.Lock()
-	defer bridgeChannel.tunnelIDTunnelLocker.Unlock()
+	bridgeChannel.locker.Lock()
+	defer bridgeChannel.locker.Unlock()
 	bridgeChannel.tunnelIDTunnelMap[tunnelID] = tunnel
 }
 
 //DeleteChannelTunnel x
 func (bridgeChannel *BridgeChannel) DeleteChannelTunnel(tunnelID uint32) {
-	bridgeChannel.tunnelIDTunnelLocker.Lock()
-	defer bridgeChannel.tunnelIDTunnelLocker.Unlock()
+	bridgeChannel.locker.Lock()
+	defer bridgeChannel.locker.Unlock()
 	delete(bridgeChannel.tunnelIDTunnelMap, tunnelID)
 }
 
