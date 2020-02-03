@@ -238,7 +238,6 @@ func (tunnel *TcpTunnel) handleConnection(conn net.Conn) {
 	tunnelChannel := &TcpTunnelConn{TunnelConnProperty: TunnelConnProperty{AgentClosed: false, ChannelID: channelID}, conn: conn}
 	tunnel.AddTunnelChannel(channelID, tunnelChannel)
 
-	defer conn.Close()
 	defer tunnel.DeleteTunnelChannel(channelID)
 	defer tunnel.TunnelChannelClosedHandler(tunnelChannel)
 	for {
