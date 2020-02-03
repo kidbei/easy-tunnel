@@ -38,12 +38,13 @@ func (bridgeServer *BridgeServer) Close() {
 	bridgeServer.locker.Lock()
 	defer bridgeServer.locker.Unlock()
 
+	bridgeServer.l.Close()
+
 	for idx, _ := range bridgeServer.channels {
 		bridgeChannel := bridgeServer.channels[idx]
 		bridgeChannel.Close()
 	}
 
-	bridgeServer.l.Close()
 }
 
 func (bridgeServer *BridgeServer) startTcpServer() {
