@@ -30,17 +30,17 @@ func NewProtocolHandler(conn net.Conn) *ProtocolHandler {
 
 	protocolHandler.encodeConfig = goframe.EncoderConfig{
 		ByteOrder:                       binary.BigEndian,
-		LengthFieldLength:               2,
+		LengthFieldLength:               4,
 		LengthAdjustment:                0,
 		LengthIncludesLengthFieldLength: false,
 	}
 
 	protocolHandler.decodeConfig = goframe.DecoderConfig{
 		ByteOrder:           binary.BigEndian,
-		LengthFieldLength:   2,
 		LengthFieldOffset:   0,
+		LengthFieldLength:   4,
 		LengthAdjustment:    0,
-		InitialBytesToStrip: 2,
+		InitialBytesToStrip: 4,
 	}
 
 	protocolHandler.frameConn =
