@@ -239,7 +239,11 @@ func (tunnel *TcpTunnel) handleConnection(conn net.Conn) {
 	tunnel.AddTunnelChannel(channelID, tunnelChannel)
 
 	defer tunnel.DeleteTunnelChannel(channelID)
-	defer tunnel.TunnelChannelClosedHandler(tunnelChannel)
+	defer func() {
+		if !tunnelChannel.AgentClosed {
+			tunnel.TunnelChannelClosedHandler(tunnelChannel)
+		}
+	}()
 	for {
 		buffer := make([]byte, 1024)
 
@@ -250,9 +254,6 @@ func (tunnel *TcpTunnel) handleConnection(conn net.Conn) {
 		}
 		data := buffer[0:readLen]
 		tunnel.DataReceivedHandler(tunnelChannel, data)
-	}
-	if !tunnelChannel.AgentClosed {
-		tunnel.TunnelChannelClosedHandler(tunnelChannel)
 	}
 }
 
