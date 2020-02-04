@@ -100,8 +100,8 @@ func (bridgeClient *BridgeClient) Send(cid uint8, data []byte) (*core.Packet, er
 }
 
 //Notify 发送请求，不需要返回
-func (bridgeClient *BridgeClient) Notify(cid uint8, data []byte) {
-	bridgeClient.protocolHandler.Notify(cid, data)
+func (bridgeClient *BridgeClient) Notify(cid uint8, data []byte) error {
+	return bridgeClient.protocolHandler.Notify(cid, data)
 }
 
 //ForwardToTunnelChannel 转发数据到服务端
@@ -113,15 +113,21 @@ func (bridgeClient *BridgeClient) ForwardToTunnel(channelID uint32, tunnelID uin
 	} else {
 		txt = string(data)
 	}
+	if err:=bridgeClient.Notify(core.CommandForwardToTunnel, packetData); err != nil {
+		log.Printf("forward to tunnel channel error:%+v\n", err)
+		return
+	}
 	log.Printf("forward to tunnel channel, channelID:%d, tunnelID:%d, data %+v\n", channelID, tunnelID, txt)
-	bridgeClient.protocolHandler.Notify(core.CommandForwardToTunnel, packetData)
 }
 
 //NotifyAgentChannelClosed x
 func (bridgeClient *BridgeClient) NotifyAgentChannelClosed(channelID uint32, tunnelID uint32) {
-	log.Printf("notify agent channel closed event for channelID:%d, tunnelID:%d\n", channelID, tunnelID)
 	data := append(core.Uint32ToBytes(channelID), core.Uint32ToBytes(tunnelID)...)
-	bridgeClient.protocolHandler.Notify(core.CommandAgentChannelClosed, data)
+	if err := bridgeClient.Notify(core.CommandAgentChannelClosed, data); err != nil {
+		log.Printf("notify agent channel closed event error:%+v\n", err)
+		return
+	}
+	log.Printf("notify agent channel closed event for channelID:%d, tunnelID:%d\n", channelID, tunnelID)
 }
 
 //OpenTunnel 开启端口映射

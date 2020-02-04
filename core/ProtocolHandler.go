@@ -1,8 +1,6 @@
 package core
 
 import (
-	"encoding/binary"
-	"github.com/smallnest/goframe"
 	"log"
 	"net"
 	"sync"
@@ -19,39 +17,22 @@ type ProtocolHandler struct {
 	Conn              net.Conn
 	CurReqID          uint32
 	PendingMap        map[uint32]*Packet
-	encodeConfig      goframe.EncoderConfig
-	decodeConfig      goframe.DecoderConfig
-	frameConn         goframe.FrameConn
+	codec			  *LengthFieldCodec
 }
 
 func NewProtocolHandler(conn net.Conn) *ProtocolHandler {
 	protocolHandler := &ProtocolHandler{}
 	protocolHandler.PendingMap = make(map[uint32]*Packet)
+	protocolHandler.Conn = conn
 
-	protocolHandler.encodeConfig = goframe.EncoderConfig{
-		ByteOrder:                       binary.BigEndian,
-		LengthFieldLength:               4,
-		LengthAdjustment:                0,
-		LengthIncludesLengthFieldLength: false,
-	}
-
-	protocolHandler.decodeConfig = goframe.DecoderConfig{
-		ByteOrder:           binary.BigEndian,
-		LengthFieldOffset:   0,
-		LengthFieldLength:   4,
-		LengthAdjustment:    0,
-		InitialBytesToStrip: 4,
-	}
-
-	protocolHandler.frameConn =
-		goframe.NewLengthFieldBasedFrameConn(protocolHandler.encodeConfig, protocolHandler.decodeConfig, conn)
+	protocolHandler.codec = NewLengthFieldCodec(conn, 4)
 
 	return protocolHandler
 }
 
 func (protocolHandler *ProtocolHandler) ReadPacket(conn net.Conn) {
 	for {
-		b, err := protocolHandler.frameConn.ReadFrame()
+		b, err := protocolHandler.codec.Decode()
 		if err != nil {
 			log.Printf("bridge channel disconnect:%s, %+v\n", conn.RemoteAddr().String(), err)
 			if protocolHandler.DisconnectHandler != nil {
@@ -87,7 +68,9 @@ func (protocolHandler *ProtocolHandler) gotPacket(packet *Packet) {
 		} else {
 			success = uint8(1)
 		}
-		protocolHandler.SendResponse(success, data, packet.Req)
+		if err := protocolHandler.SendResponse(success, data, packet.Req); err != nil {
+			log.Printf("send response error:%+v\n", err)
+		}
 	} else if packet.Flag == ResponseFlag {
 		requestPacket := protocolHandler.PendingMap[packet.Req]
 		if requestPacket != nil {
@@ -107,6 +90,14 @@ func (protocolHandler *ProtocolHandler) generateID() uint32 {
 	return atomic.AddUint32(&protocolHandler.CurReqID, 1)
 }
 
+func (protocolHandler *ProtocolHandler) write(data []byte) (n int, err error) {
+	out, e := protocolHandler.codec.Encode(data)
+	if e != nil {
+		return 0, e
+	}
+	return protocolHandler.Conn.Write(out)
+}
+
 //Send 发送请求等待返回
 func (protocolHandler *ProtocolHandler) Send(cid uint8, data []byte) (*Packet, error) {
 	wg := sync.WaitGroup{}
@@ -117,25 +108,39 @@ func (protocolHandler *ProtocolHandler) Send(cid uint8, data []byte) (*Packet, e
 	packetData := PacketToBytes(sendPacket)
 	protocolHandler.PendingMap[reqID] = sendPacket
 	wg.Add(1)
-	protocolHandler.frameConn.WriteFrame(packetData)
+	n, err := protocolHandler.write(packetData)
+	if n < len(packetData) || err != nil {
+		wg.Done()
+		return nil, err
+	}
 	wg.Wait()
 	return sendPacket, nil
 }
 
-//Notify noti发送请求，不需要返回
-func (protocolHandler *ProtocolHandler) Notify(cid uint8, data []byte) {
+
+
+//Notify notify发送请求，不需要返回
+func (protocolHandler *ProtocolHandler) Notify(cid uint8, data []byte) error {
 	ver := CurrentVersion
 	flag := NotifyFlag
 	reqID := protocolHandler.generateID()
 	packet := &Packet{Ver: ver, Flag: flag, Req: reqID, Cid: cid, Data: data, ReqTime: time.Now().Unix()}
 	packetData := PacketToBytes(packet)
-	protocolHandler.frameConn.WriteFrame(packetData)
+	n, err := protocolHandler.write(packetData)
+	if n < len(packetData) || err != nil {
+		return err
+	}
+	return nil
 }
 
-func (protocolHandler *ProtocolHandler) SendResponse(success uint8, data []byte, reqID uint32) {
+func (protocolHandler *ProtocolHandler) SendResponse(success uint8, data []byte, reqID uint32) error {
 	ver := CurrentVersion
 	flag := ResponseFlag
 	packet := &Packet{Ver: ver, Flag: flag, Success: success, Req: reqID, Data: data}
 	packetData := PacketToBytes(packet)
-	protocolHandler.frameConn.WriteFrame(packetData)
+	n, err := protocolHandler.write(packetData)
+	if n < len(packetData) || err != nil {
+		return err
+	}
+	return nil
 }

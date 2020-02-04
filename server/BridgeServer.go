@@ -105,8 +105,7 @@ func (bridgeChannel *BridgeChannel) handleRequest(packet *core.Packet) (data []b
 func (bridgeChannel *BridgeChannel) handleNotify(packet *core.Packet) {
 	switch packet.Cid {
 	case core.CommandPing:
-		log.Printf("got ping from %s\n", bridgeChannel.conn.RemoteAddr().String())
-		bridgeChannel.protocolHandler.Notify(core.CommandPong, nil)
+		bridgeChannel.notifyPong()
 	case core.CommandAgentChannelClosed:
 		bridgeChannel.handleAgentChannelClosed(packet)
 	case core.CommandForwardToTunnel:
@@ -119,6 +118,15 @@ func (bridgeChannel *BridgeChannel) handleNotify(packet *core.Packet) {
 func (bridgeChannel *BridgeChannel) generateTunnelID() uint32 {
 	return atomic.AddUint32(&bridgeChannel.tunnelIDAtom, 1)
 }
+
+func (bridgeChannel *BridgeChannel) notifyPong() {
+	if err := bridgeChannel.protocolHandler.Notify(core.CommandPong, nil); err != nil {
+		log.Printf("send pong error:%+v\n", err)
+		return
+	}
+	log.Printf("got ping from %s\n", bridgeChannel.conn.RemoteAddr().String())
+}
+
 
 //handleOpenTunnel 开启端口映射
 func (bridgeChannel *BridgeChannel) handleOpenTunnel(packet *core.Packet) (data []byte, err error) {
@@ -201,15 +209,21 @@ func (bridgeChannel *BridgeChannel) ForwardDataToAgent(channelID uint32, tunnelI
 	} else {
 		txt = string(data)
 	}
+	if err := bridgeChannel.protocolHandler.Notify(core.CommandForwardToLocal, packetData); err != nil {
+		log.Printf("forward to agent error:%+v\n", err)
+		return
+	}
 	log.Printf("forward to agent, channelID:%d, tunnelID:%d, data :%+v\n", channelID, tunnelID, txt)
-	bridgeChannel.protocolHandler.Notify(core.CommandForwardToLocal, packetData)
 }
 
 //NotifyTunnelChannelClosed 映射连接上的连接主动关闭后触发
 func (bridgeChannel *BridgeChannel) NotifyTunnelChannelClosed(channelID uint32, tunnelID uint32) {
-	log.Printf("notify tunnel channel closed to local agent, ChannelID:%d, tunnelID:%d\n", channelID, tunnelID)
 	data := append(core.Uint32ToBytes(channelID), core.Uint32ToBytes(tunnelID)...)
-	bridgeChannel.protocolHandler.Notify(core.CommandTunnelChannelClosed, data)
+	if err := bridgeChannel.protocolHandler.Notify(core.CommandTunnelChannelClosed, data); err != nil {
+		log.Printf("notify tunnel channel closed event to local agent error:%+v\n", err)
+		return
+	}
+	log.Printf("notify tunnel channel closed to local agent, ChannelID:%d, tunnelID:%d\n", channelID, tunnelID)
 }
 
 //AddChannelTunnel x
