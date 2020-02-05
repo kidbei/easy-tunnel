@@ -14,18 +14,16 @@ type ProtocolHandler struct {
 	RequestHandler    func(*Packet) (data []byte, err error)
 	NotifyHandler     func(*Packet)
 	DisconnectHandler func()
-	Conn              net.Conn
 	CurReqID          uint32
 	PendingMap        map[uint32]*Packet
-	codec			  *LengthFieldCodec
+	codec			  LengthFieldCodec
 }
 
 func NewProtocolHandler(conn net.Conn) *ProtocolHandler {
 	protocolHandler := &ProtocolHandler{}
 	protocolHandler.PendingMap = make(map[uint32]*Packet)
-	protocolHandler.Conn = conn
 
-	protocolHandler.codec = NewLengthFieldCodec(conn, 4)
+	protocolHandler.codec = *NewLengthFieldCodec(conn, 4)
 
 	return protocolHandler
 }
@@ -44,17 +42,8 @@ func (protocolHandler *ProtocolHandler) ReadPacket(conn net.Conn) {
 			log.Printf("got empty data from socket %s\n", conn.RemoteAddr().String())
 			continue
 		}
-		packet := &Packet{}
-		packet.Ver = BytesToUInt8(b[0:1])
-		packet.Flag = BytesToUInt8(b[1:2])
-		packet.Req = BytesToUInt32(b[2:6])
-		if packet.Flag != ResponseFlag {
-			packet.Cid = BytesToUInt8(b[6:7])
-		} else {
-			packet.Success = BytesToUInt8(b[6:7])
-		}
-		packet.Data = b[7:]
-		protocolHandler.gotPacket(packet)
+		packet := BinaryToPacket(b)
+		protocolHandler.gotPacket(&packet)
 	}
 }
 
@@ -95,7 +84,7 @@ func (protocolHandler *ProtocolHandler) write(data []byte) (n int, err error) {
 	if e != nil {
 		return 0, e
 	}
-	return protocolHandler.Conn.Write(out)
+	return protocolHandler.codec.conn.Write(out)
 }
 
 //Send 发送请求等待返回

@@ -41,6 +41,7 @@ func main() {
 	}
 
 	bridgeClient := NewBridgeClient()
+	bridgeClient.ExitOnDisconnect = true
 	success, err := bridgeClient.Connect(*remoteHost, *remotePort)
 	if !success {
 		panic(err)

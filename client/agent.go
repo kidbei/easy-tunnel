@@ -54,13 +54,7 @@ func (agent *TcpAgent) Connect(host string, port int) error {
 }
 
 func (agent *TcpAgent) ForwardToAgentChannel(data []byte) {
-	var txt interface{}
-	if len(data) > 1024 {
-		txt = len(data)
-	} else {
-		txt = string(data)
-	}
-	log.Printf("forward to agent, channelID:%d,tunnelID:%d, data:%+v\n", agent.ChannelID, agent.TunnelID, txt)
+	log.Printf("forward to agent, channelID:%d,tunnelID:%d, data:%+v\n", agent.ChannelID, agent.TunnelID, len(data))
 	agent.Conn.Write(data)
 }
 

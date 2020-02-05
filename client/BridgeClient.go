@@ -55,7 +55,6 @@ func (bridgeClient *BridgeClient) Connect(host string, port int) (bool, error) {
 	bridgeClient.protocolHandler.NotifyHandler = bridgeClient.handleNotify
 	bridgeClient.protocolHandler.RequestHandler = bridgeClient.handleRequest
 	bridgeClient.protocolHandler.DisconnectHandler = bridgeClient.handleDisconnect
-	bridgeClient.protocolHandler.Conn = conn
 	go bridgeClient.protocolHandler.ReadPacket(conn)
 	bridgeClient.startPing()
 	return true, nil
@@ -107,17 +106,11 @@ func (bridgeClient *BridgeClient) Notify(cid uint8, data []byte) error {
 //ForwardToTunnelChannel 转发数据到服务端
 func (bridgeClient *BridgeClient) ForwardToTunnel(channelID uint32, tunnelID uint32, data []byte) {
 	packetData := append(append(core.Uint32ToBytes(channelID), core.Uint32ToBytes(tunnelID)...), data...)
-	var txt interface{}
-	if len(data) > 1024 {
-		txt = len(data)
-	} else {
-		txt = string(data)
-	}
-	if err:=bridgeClient.Notify(core.CommandForwardToTunnel, packetData); err != nil {
+	if err := bridgeClient.Notify(core.CommandForwardToTunnel, packetData); err != nil {
 		log.Printf("forward to tunnel channel error:%+v\n", err)
 		return
 	}
-	log.Printf("forward to tunnel channel, channelID:%d, tunnelID:%d, data %+v\n", channelID, tunnelID, txt)
+	log.Printf("forward to tunnel channel, channelID:%d, tunnelID:%d, data %+v\n", channelID, tunnelID, len(data))
 }
 
 //NotifyAgentChannelClosed x

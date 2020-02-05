@@ -72,7 +72,6 @@ func (bridgeServer *BridgeServer) handleBridgeConnection(conn net.Conn, protocol
 	channel.protocolHandler = protocolHandler
 	channel.protocolHandler.RequestHandler = channel.handleRequest
 	channel.protocolHandler.DisconnectHandler = channel.disconnectHandler
-	channel.protocolHandler.Conn = conn
 	channel.protocolHandler.NotifyHandler = channel.handleNotify
 	channel.protocolHandler.ReadPacket(conn)
 }
@@ -203,17 +202,11 @@ func (bridgeChannel *BridgeChannel) handleForwardToTunnel(packet *core.Packet) {
 //ForwardDataToAgent 转发数据到客户端本地
 func (bridgeChannel *BridgeChannel) ForwardDataToAgent(channelID uint32, tunnelID uint32, data []byte) {
 	packetData := append(append(core.Uint32ToBytes(channelID), core.Uint32ToBytes(tunnelID)...), data...)
-	var txt interface{}
-	if len(data) > 1024 {
-		txt = len(data)
-	} else {
-		txt = string(data)
-	}
 	if err := bridgeChannel.protocolHandler.Notify(core.CommandForwardToLocal, packetData); err != nil {
 		log.Printf("forward to agent error:%+v\n", err)
 		return
 	}
-	log.Printf("forward to agent, channelID:%d, tunnelID:%d, data :%+v\n", channelID, tunnelID, txt)
+	log.Printf("forward to agent, channelID:%d, tunnelID:%d, data :%+v\n", channelID, tunnelID, len(data))
 }
 
 //NotifyTunnelChannelClosed 映射连接上的连接主动关闭后触发

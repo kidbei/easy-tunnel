@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 )
 
@@ -35,40 +36,37 @@ type LengthFieldCodec struct {
 
 func NewLengthFieldCodec(conn net.Conn, lengthFieldLength int) *LengthFieldCodec {
 	l := &LengthFieldCodec{conn:conn, LengthFieldLength:lengthFieldLength}
-	if lengthFieldLength <= 2 {
-		l.ByteOrder = binary.LittleEndian
-	} else {
-		l.ByteOrder = binary.BigEndian
-	}
+	l.ByteOrder = binary.LittleEndian
 	return l
 }
 
 func (cc *LengthFieldCodec) Encode(data []byte) (out []byte, err error) {
-	length := len(data)
+	dataLen := len(data)
+	length := dataLen + cc.LengthFieldLength
 
 	switch cc.LengthFieldLength {
 	case 1:
 		if length >= 256 {
 			return nil, fmt.Errorf("length does not fit into a byte: %d", length)
 		}
-		out = []byte{byte(length)}
+		out = []byte{byte(dataLen)}
 	case 2:
 		if length >= 65536 {
 			return nil, fmt.Errorf("length does not fit into a short integer: %d", length)
 		}
 		out = make([]byte, 2)
-		cc.ByteOrder.PutUint16(out, uint16(length))
+		cc.ByteOrder.PutUint16(out, uint16(dataLen))
 	case 3:
 		if length >= 16777216 {
 			return nil, fmt.Errorf("length does not fit into a medium integer: %d", length)
 		}
-		out = writeUint24(cc.ByteOrder, length)
+		out = writeUint24(cc.ByteOrder, dataLen)
 	case 4:
 		out = make([]byte, 4)
-		cc.ByteOrder.PutUint32(out, uint32(length))
+		cc.ByteOrder.PutUint32(out, uint32(dataLen))
 	case 8:
 		out = make([]byte, 8)
-		cc.ByteOrder.PutUint64(out, uint64(length))
+		cc.ByteOrder.PutUint64(out, uint64(dataLen))
 	default:
 		return nil, ErrUnsupportedLength
 	}
@@ -78,16 +76,23 @@ func (cc *LengthFieldCodec) Encode(data []byte) (out []byte, err error) {
 }
 
 func (cc *LengthFieldCodec) Decode() ([]byte, error) {
-	_, len, err := cc.getUnadjustedFrameLength()
+	lenBuf, size, err := cc.getUnadjustedFrameLength()
 	if err != nil {
 		return nil, err
 	}
-	if len == 0 {
+	if size == 0 {
 		return nil, ErrUnexpectedEOF
 	}
 
-	n, data := cc.ReadN(int(len))
+	if size > 16777216 {
+		log.Printf("ssss#######:%d,buf:%+v\n", size, lenBuf)
+	}
+
+	n, data := cc.ReadN(int(size))
 	if n == 0 {
+		return nil, ErrUnexpectedEOF
+	}
+	if n != int(size) {
 		return nil, ErrUnexpectedEOF
 	}
 	return data[:n], nil

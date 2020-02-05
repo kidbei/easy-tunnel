@@ -40,6 +40,9 @@ const (
 	CommandTunnelChannelClosed = 7
 )
 
+var byteOrder = binary.LittleEndian
+
+
 //Packet 数据包
 type Packet struct {
 	//协议版本号
@@ -72,31 +75,41 @@ type OpenTunnelReq struct {
 //PacketToBytes 封包
 func PacketToBytes(packet *Packet) []byte {
 	buffer := new(bytes.Buffer)
-	buffer.Write([]byte{packet.Ver})
-	buffer.Write([]byte{packet.Flag})
+	buffer.WriteByte(packet.Ver)
+	buffer.WriteByte(packet.Flag)
 	buffer.Write(Uint32ToBytes(packet.Req))
 	if packet.Flag != ResponseFlag {
-		buffer.Write([]byte{packet.Cid})
+		buffer.WriteByte(packet.Cid)
 	} else {
-		buffer.Write([]byte{packet.Success})
+		buffer.WriteByte(packet.Success)
 	}
 	buffer.Write(packet.Data)
 	return buffer.Bytes()
 }
 
-//BytesToInt32 x
-func BytesToInt32(b []byte) int {
-	buf := bytes.NewBuffer(b)
-	var tmp uint32
-	binary.Read(buf, binary.BigEndian, &tmp)
-	return int(tmp)
+func BinaryToPacket(data []byte) Packet  {
+	buffer := bytes.NewBuffer(data)
+	packet := Packet{}
+
+	packet.Ver, _ = buffer.ReadByte()
+	packet.Flag, _ = buffer.ReadByte()
+	reqBytes := make([]byte, 4)
+	buffer.Read(reqBytes)
+	packet.Req = BytesToUInt32(reqBytes)
+	if packet.Flag != ResponseFlag {
+		packet.Cid, _ = buffer.ReadByte()
+	} else {
+		packet.Success, _ = buffer.ReadByte()
+	}
+	packet.Data = data[7:]
+	return packet
 }
 
 //BytesToUInt32 x
 func BytesToUInt32(b []byte) uint32 {
 	buf := bytes.NewBuffer(b)
 	var tmp uint32
-	binary.Read(buf, binary.BigEndian, &tmp)
+	binary.Read(buf, byteOrder, &tmp)
 	return tmp
 }
 
@@ -104,40 +117,15 @@ func BytesToUInt32(b []byte) uint32 {
 func BytesToUInt8(b []byte) uint8 {
 	buf := bytes.NewBuffer(b)
 	var tmp uint8
-	binary.Read(buf, binary.LittleEndian, &tmp)
+	binary.Read(buf, byteOrder, &tmp)
 	return tmp
 }
 
 //Uint32ToBytes x
 func Uint32ToBytes(i uint32) []byte {
-	buf := bytes.NewBuffer([]byte{})
-	tmp := i
-	binary.Write(buf, binary.BigEndian, tmp)
-	return buf.Bytes()
-}
-
-//Int64ToBytes x
-func Int64ToBytes(i int64) []byte {
-	buf := bytes.NewBuffer([]byte{})
-	tmp := i
-	binary.Write(buf, binary.BigEndian, tmp)
-	return buf.Bytes()
-}
-
-//Int32ToBytes x
-func Int32ToBytes(i int32) []byte {
-	buf := bytes.NewBuffer([]byte{})
-	tmp := i
-	binary.Write(buf, binary.BigEndian, tmp)
-	return buf.Bytes()
-}
-
-//BytesToInt64 x
-func BytesToInt64(b []byte) int64 {
-	buf := bytes.NewBuffer(b)
-	var tmp int64
-	binary.Read(buf, binary.LittleEndian, &tmp)
-	return tmp
+	b := make([]byte, 4)
+	byteOrder.PutUint32(b, i)
+	return b
 }
 
 //StringIPToInt x

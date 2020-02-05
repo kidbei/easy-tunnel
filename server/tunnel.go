@@ -147,13 +147,7 @@ func (tunnel *TunnelProperty) ForwardToTunnelChannel(channelID uint32, data []by
 		log.Printf("forward error, tunnel channel is not found for ChannelID:%d\n", channelID)
 		return
 	}
-	var txt interface{}
-	if len(data) > 1024 {
-		txt = len(data)
-	} else {
-		txt = string(data)
-	}
-	log.Printf("forward to tunnel, channelID:%d, tunnelID:%d, data %+v\n",channelID, tunnel.TunnelID, txt)
+	log.Printf("forward to tunnel, channelID:%d, tunnelID:%d, data %+v\n",channelID, tunnel.TunnelID, len(data))
 	tunnelChannel.Write(data)
 }
 
